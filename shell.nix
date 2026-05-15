@@ -6,8 +6,12 @@ let
   };
 in
 pkgs.mkShell {
-  buildInputs = [
+  buildInputs = with pkgs; [
     rustToolchain
+    SDL2
+    SDL2_mixer
+    SDL2_gfx
+    SDL2_ttf
   ];
 
   shellHook = ''
