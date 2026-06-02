@@ -2,6 +2,7 @@ mod components;
 mod systems;
 
 use std::collections::HashSet;
+use std::time::Instant;
 
 use legion::{Resources, Schedule, World};
 use roxlap_cavegen::pack_dense_grid_to_vxl;
@@ -23,6 +24,10 @@ use crate::systems::render::render_system;
 
 const INITIAL_WINDOW_WIDTH: u32 = 1280;
 const INITIAL_WINDOW_HEIGHT: u32 = 720;
+
+pub struct Dt(pub f64);
+
+pub struct FrameTimer(pub Instant);
 
 pub struct CanvasResources {
     pub canvas: Canvas<Window>,
@@ -176,6 +181,9 @@ fn initial_resources(canvas: Canvas<Window>, world: &World) -> Resources {
     let vxl = build_world();
     resources.insert(vxl);
 
+    resources.insert(FrameTimer(Instant::now()));
+    resources.insert(Dt(0.0));
+
     resources
 }
 
@@ -191,7 +199,17 @@ fn main() {
     let mut world = World::default();
     let mut resources = initial_resources(canvas, &mut world);
 
+    // Reset here so the first dt isn't polluted by schedule build / world init time.
+    resources.get_mut::<FrameTimer>().unwrap().0 = Instant::now();
+
     'running: loop {
+        {
+            let mut frame_timer = resources.get_mut::<FrameTimer>().unwrap();
+            let mut dt = resources.get_mut::<Dt>().unwrap();
+            dt.0 = frame_timer.0.elapsed().as_secs_f64();
+            frame_timer.0 = Instant::now();
+        }
+
         for event in event_pump.poll_iter() {
             let mut pinput = resources.get_mut::<HashSet<PlayerInput>>().unwrap();
             match event {
