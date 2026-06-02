@@ -199,9 +199,6 @@ fn main() {
     let mut world = World::default();
     let mut resources = initial_resources(canvas, &mut world);
 
-    // Reset here so the first dt isn't polluted by schedule build / world init time.
-    resources.get_mut::<FrameTimer>().unwrap().0 = Instant::now();
-
     'running: loop {
         {
             let mut frame_timer = resources.get_mut::<FrameTimer>().unwrap();
