@@ -1,50 +1,38 @@
 use glam::DVec3;
 use legion::{system, world::SubWorld, IntoQuery};
 use roxlap_core::{
-    opticast, rasterizer::ScratchPool, scalar_rasterizer::ScalarRasterizer, update_lighting,
-    Camera, Engine, GridView, OpticastSettings,
+    opticast, scalar_rasterizer::ScalarRasterizer, Camera, Engine, GridView, OpticastSettings,
 };
-use roxlap_formats::{edit::MAXZDIM, vxl::Vxl};
-use sdl2::pixels::{Color, PixelFormatEnum};
+use roxlap_formats::vxl::Vxl;
+use sdl2::pixels::Color;
 
 use crate::{
     components::{miner::Miner, newton_body::NewtonBody},
     fonts::FontRenderer,
     systems::performance_info::PerformanceInfo,
-    CanvasResources,
+    CanvasResources, RenderBuffers, RenderTexture, RENDER_HEIGHT, RENDER_WIDTH,
 };
-
-const WIDTH: u32 = 800;
-const HEIGHT: u32 = 600;
-
-const VSID: u32 = 32;
-const GROUND_Z: i32 = 200;
-const CUBE_EDGE: i32 = 10;
 
 #[system]
 #[read_component(Miner)]
 #[read_component(NewtonBody)]
 pub fn render(
     #[resource] canvas_resources: &mut CanvasResources,
-    #[resource] world_map: &mut Vxl,
-    #[resource] engine: &mut Engine,
+    #[resource] world_map: &Vxl,
+    #[resource] engine: &Engine,
+    #[resource] render_tex: &mut RenderTexture,
+    #[resource] buffers: &mut RenderBuffers,
     #[resource] font_renderer: &FontRenderer,
     #[resource] perf: &PerformanceInfo,
     world: &SubWorld,
 ) {
-    update_lighting(
-        &mut world_map.data,
-        &world_map.column_offset,
-        world_map.vsid,
-        0,
-        0,
-        0,
-        world_map.vsid as i32,
-        world_map.vsid as i32,
-        MAXZDIM,
-        engine.lightmode(),
-        engine.lights(),
-    );
+    // Push per-frame engine state onto the scratch pool (sky colour, side shades).
+    // hello.rs does this every frame before calling opticast.
+    let sky = engine.sky_color();
+    let sky_i = i32::from_ne_bytes(sky.to_ne_bytes());
+    buffers.pool.set_skycast(sky_i, 0);
+    let s = engine.side_shades();
+    buffers.pool.set_side_shades(s[0], s[1], s[2], s[3], s[4], s[5]);
 
     // Translate the miner's rigid-body state to a voxlap Camera.
     //
@@ -52,7 +40,7 @@ pub fn render(
     //   -Z = nose (forward), +X = right wing, +Y = top of body
     //
     // Rotating each body-local axis by `orientation` gives its world-space
-    // direction.  Voxlap's Camera wants `down` (not `up`), so we negate Y.
+    // direction. Voxlap's Camera wants `down` (not `up`), so we negate Y.
     let camera = {
         let mut query = <(&Miner, &NewtonBody)>::query();
         if let Some((_, body)) = query.iter(world).next() {
@@ -68,9 +56,9 @@ pub fn render(
         } else {
             // Fallback: fixed view matching the original hardcoded demo camera
             // (yaw = 0, pitch = 0.15 rad downward, hovering in front of the cube).
-            let cx = f64::from(VSID) * 0.5;
-            let cy = f64::from(VSID) * 0.5;
-            let cz = f64::from(GROUND_Z) - f64::from(CUBE_EDGE) - 6.0;
+            let cx = f64::from(crate::VSID) * 0.5;
+            let cy = f64::from(crate::VSID) * 0.5;
+            let cz = f64::from(crate::GROUND_Z) - f64::from(crate::CUBE_EDGE) - 6.0;
             let (sp, cp) = (0.15_f64.sin(), 0.15_f64.cos());
             Camera {
                 pos: [cx - 16.0, cy, cz],
@@ -81,31 +69,32 @@ pub fn render(
         }
     };
 
-    let mut pool = ScratchPool::new(WIDTH, HEIGHT, world_map.vsid);
-    let mut framebuffer: Vec<u32> = vec![0u32; (WIDTH * HEIGHT) as usize];
-    let mut zbuffer: Vec<f32> = vec![0.0f32; (WIDTH * HEIGHT) as usize];
-    let settings = OpticastSettings::for_oracle_framebuffer(WIDTH, HEIGHT);
+    // Pre-fill with sky so any ray that hits nothing shows as sky.
+    buffers.framebuffer.fill(sky);
 
+    let settings = OpticastSettings::for_oracle_framebuffer(RENDER_WIDTH, RENDER_HEIGHT);
     {
-        let grid = GridView::from_single_vxl(&world_map);
-        let mut rasterizer =
-            ScalarRasterizer::new(&mut framebuffer, &mut zbuffer, WIDTH as usize, grid);
-        let _ = opticast(&mut rasterizer, &mut pool, &camera, &settings, grid);
+        let grid = GridView::from_single_vxl(world_map);
+        let mut rasterizer = ScalarRasterizer::new(
+            &mut buffers.framebuffer,
+            &mut buffers.zbuffer,
+            RENDER_WIDTH as usize,
+            grid,
+        );
+        let _ = opticast(&mut rasterizer, &mut buffers.pool, &camera, &settings, grid);
     }
 
-    let mut texture = canvas_resources
-        .texture_creator
-        .create_texture_streaming(PixelFormatEnum::ARGB8888, WIDTH, HEIGHT)
-        .map_err(|e| e.to_string())
-        .unwrap();
-
-    let row_bytes = (WIDTH * 4) as usize;
-    texture
-        .update(None, bytemuck::cast_slice(&framebuffer), row_bytes)
-        .expect("Failed to update texture");
+    let row_bytes = (RENDER_WIDTH * 4) as usize;
+    render_tex
+        .0
+        .update(None, bytemuck::cast_slice(&buffers.framebuffer), row_bytes)
+        .expect("texture update failed");
 
     canvas_resources.canvas.clear();
-    canvas_resources.canvas.copy(&texture, None, None).unwrap();
+    canvas_resources
+        .canvas
+        .copy(&render_tex.0, None, None)
+        .unwrap();
 
     font_renderer.draw_text(
         &mut canvas_resources.canvas,

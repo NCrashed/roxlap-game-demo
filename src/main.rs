@@ -8,7 +8,7 @@ use std::time::Instant;
 use glam::{DMat3, DQuat, DVec3};
 use legion::{Resources, Schedule, World};
 use roxlap_cavegen::pack_dense_grid_to_vxl;
-use roxlap_core::Engine;
+use roxlap_core::{rasterizer::ScratchPool, update_lighting, Engine};
 use roxlap_formats::{
     edit::{set_rect, MAXZDIM},
     vxl::Vxl,
@@ -17,7 +17,8 @@ use sdl2::{
     event::Event,
     keyboard::Scancode,
     mixer::InitFlag,
-    render::{Canvas, TextureCreator, WindowCanvas},
+    pixels::PixelFormatEnum,
+    render::{Canvas, Texture, TextureCreator, WindowCanvas},
     video::{Window, WindowContext},
     EventPump,
 };
@@ -34,6 +35,10 @@ use crate::systems::{
 const INITIAL_WINDOW_WIDTH: u32 = 1280;
 const INITIAL_WINDOW_HEIGHT: u32 = 720;
 
+/// Render resolution (fixed; independent of the window size).
+pub const RENDER_WIDTH: u32 = 800;
+pub const RENDER_HEIGHT: u32 = 600;
+
 pub struct Dt(pub f64);
 
 pub struct FrameTimer(pub Instant);
@@ -41,6 +46,30 @@ pub struct FrameTimer(pub Instant);
 pub struct CanvasResources {
     pub canvas: Canvas<Window>,
     pub texture_creator: TextureCreator<WindowContext>,
+}
+
+/// Long-lived streaming texture for the 3-D framebuffer.
+/// Lives outside CanvasResources so the canvas and the texture can be
+/// borrowed independently in the render system.
+pub struct RenderTexture(pub Texture);
+
+/// Reusable per-frame scratch: opticast pool, pixel buffer, depth buffer.
+/// Allocated once at startup; reset in-place each frame instead of reallocating.
+pub struct RenderBuffers {
+    pub pool: ScratchPool,
+    pub framebuffer: Vec<u32>,
+    pub zbuffer: Vec<f32>,
+}
+
+impl RenderBuffers {
+    pub fn new(width: u32, height: u32, vsid: u32) -> Self {
+        let n = (width * height) as usize;
+        Self {
+            pool: ScratchPool::new(width, height, vsid),
+            framebuffer: vec![0u32; n],
+            zbuffer: vec![0.0f32; n],
+        }
+    }
 }
 
 fn initialize() -> Result<(WindowCanvas, EventPump), String> {
@@ -175,21 +204,44 @@ fn initial_resources(canvas: Canvas<Window>, world: &World) -> Resources {
     let mut resources = Resources::default();
     let texture_creator = canvas.texture_creator();
 
+    // Create the streaming texture once; reused every frame via RenderTexture resource.
+    let render_texture = RenderTexture(
+        texture_creator
+            .create_texture_streaming(PixelFormatEnum::ARGB8888, RENDER_WIDTH, RENDER_HEIGHT)
+            .expect("failed to create render texture"),
+    );
+
     let canvas_resources = CanvasResources {
         canvas,
         texture_creator,
     };
-    let mut engine = Engine::new();
 
+    let mut engine = Engine::new();
     engine.set_side_shades(15, 15, 15, 15, 15, 15);
     engine.set_lightmode(1);
+
+    let mut vxl = build_world();
+    // Bake directional lighting once at startup — NOT every frame.
+    update_lighting(
+        &mut vxl.data,
+        &vxl.column_offset,
+        vxl.vsid,
+        0,
+        0,
+        0,
+        vxl.vsid as i32,
+        vxl.vsid as i32,
+        MAXZDIM,
+        engine.lightmode(),
+        engine.lights(),
+    );
+
     resources.insert(engine);
     resources.insert(canvas_resources);
+    resources.insert(render_texture);
+    resources.insert(RenderBuffers::new(RENDER_WIDTH, RENDER_HEIGHT, VSID));
     resources.insert(HashSet::<PlayerInput>::new());
-
-    let vxl = build_world();
     resources.insert(vxl);
-
     resources.insert(FrameTimer(Instant::now()));
     resources.insert(Dt(0.0));
     resources.insert(FontRenderer::new());
