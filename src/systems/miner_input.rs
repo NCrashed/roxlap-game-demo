@@ -59,5 +59,8 @@ pub fn miner_input(
         if !inputs.contains(&PlayerInput::RollCW) && !inputs.contains(&PlayerInput::RollCCW) {
             damp_axis(&mut body.angular_vel, forward, damp);
         }
+        if !inputs.contains(&PlayerInput::IncTrust) && !inputs.contains(&PlayerInput::DecTrust) {
+            damp_axis(&mut body.vel, forward, LINEAR_ACCEL * dt.0);
+        }
     }
 }
