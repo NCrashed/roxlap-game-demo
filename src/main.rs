@@ -1,9 +1,11 @@
 mod components;
+mod fonts;
 mod systems;
 
 use std::collections::HashSet;
 use std::time::Instant;
 
+use glam::{DMat3, DQuat, DVec3};
 use legion::{Resources, Schedule, World};
 use roxlap_cavegen::pack_dense_grid_to_vxl;
 use roxlap_core::Engine;
@@ -20,7 +22,14 @@ use sdl2::{
     EventPump,
 };
 
-use crate::systems::render::render_system;
+use crate::components::{miner::Miner, newton_body::NewtonBody};
+use crate::fonts::FontRenderer;
+use crate::systems::{
+    miner_input::miner_input_system,
+    newton_body::newton_body_system,
+    performance_info::{update_info_system, PerformanceInfo},
+    render::render_system,
+};
 
 const INITIAL_WINDOW_WIDTH: u32 = 1280;
 const INITIAL_WINDOW_HEIGHT: u32 = 720;
@@ -183,6 +192,8 @@ fn initial_resources(canvas: Canvas<Window>, world: &World) -> Resources {
 
     resources.insert(FrameTimer(Instant::now()));
     resources.insert(Dt(0.0));
+    resources.insert(FontRenderer::new());
+    resources.insert(PerformanceInfo::new());
 
     resources
 }
@@ -194,10 +205,48 @@ fn main() {
     let (canvas, mut event_pump) = initialize().unwrap();
 
     let mut schedule = Schedule::builder()
+        .add_system(update_info_system())
+        .add_system(miner_input_system())
+        .add_system(newton_body_system())
         .add_thread_local(render_system())
         .build();
     let mut world = World::default();
     let mut resources = initial_resources(canvas, &mut world);
+
+    // Spawn the player entity.  Initial orientation matches the old hardcoded
+    // demo camera: looking toward +X (yaw=0), pitched 0.15 rad nose-down.
+    //
+    // Body-local conventions: -Z=forward, +X=right, +Y=up.
+    // We build a rotation matrix whose columns describe where each body axis
+    // ends up in voxlap world space, then convert to a quaternion.
+    {
+        let pitch: f64 = 0.15;
+        let (sp, cp) = (pitch.sin(), pitch.cos());
+        // where body +X goes  →  world +Y  (right wing = horizontal right)
+        // where body +Y goes  →  world (-sp, 0, cp)  (top = voxlap-sky direction)
+        // where body +Z goes  →  world (-cp, 0, -sp)  (tail = -forward)
+        let orientation =
+            DQuat::from_mat3(&DMat3::from_cols(
+                DVec3::Y,
+                DVec3::new(-sp, 0.0, cp),
+                DVec3::new(-cp, 0.0, -sp),
+            ))
+            .normalize();
+
+        let cx = f64::from(VSID) * 0.5;
+        let cy = f64::from(VSID) * 0.5;
+        let cz = f64::from(GROUND_Z) - f64::from(CUBE_EDGE) - 6.0;
+        world.push((
+            Miner { x: 0.0, y: 0.0 },
+            NewtonBody {
+                mass: 1.0,
+                pos: DVec3::new(cx - 16.0, cy, cz),
+                vel: DVec3::ZERO,
+                orientation,
+                angular_vel: DVec3::ZERO,
+            },
+        ));
+    }
 
     'running: loop {
         {
