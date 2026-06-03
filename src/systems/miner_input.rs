@@ -8,13 +8,15 @@ use crate::{
     Dt, PlayerInput,
 };
 
-// How fast angular velocity grows per second while a rotation key is held.
-// Units: radians / s². Multiply by dt each frame → radians/s added to angular_vel.
 const ANGULAR_ACCEL: f64 = 1.2;
-
-// How fast linear velocity grows per second while a thrust key is held.
-// Units: voxels / s². Multiply by dt each frame → voxels/s added to vel.
 const LINEAR_ACCEL: f64 = 20.0;
+
+/// Damp `vel`'s component along `axis` toward zero by at most `amount`,
+/// without overshooting.
+fn damp_axis(vel: &mut DVec3, axis: DVec3, amount: f64) {
+    let v = vel.dot(axis);
+    *vel -= axis * v.signum() * amount.min(v.abs());
+}
 
 #[system]
 #[read_component(Miner)]
@@ -26,13 +28,13 @@ pub fn miner_input(
 ) {
     let mut query = <(&Miner, &mut NewtonBody)>::query();
     for (_, body) in query.iter_mut(world) {
-        // Derive the three local axes from the body's current orientation quaternion.
-        // Rotating a world-space basis vector by the quaternion gives the equivalent
-        // axis in world space as the body sees it right now.
-        let forward = body.orientation * DVec3::NEG_Z; // nose direction
-        let right = body.orientation * DVec3::X; // right wing direction
-        let up = body.orientation * DVec3::Y; // top of body direction
+        let forward = body.orientation * DVec3::NEG_Z;
+        let right = body.orientation * DVec3::X;
+        let up = body.orientation * DVec3::Y;
 
+        let damp = ANGULAR_ACCEL * dt.0;
+
+        // Acceleration for held keys.
         for input in inputs {
             match input {
                 PlayerInput::PitchCW => body.angular_vel += right * ANGULAR_ACCEL * dt.0,
@@ -44,6 +46,18 @@ pub fn miner_input(
                 PlayerInput::IncTrust => body.vel += forward * LINEAR_ACCEL * dt.0,
                 PlayerInput::DecTrust => body.vel -= forward * LINEAR_ACCEL * dt.0,
             }
+        }
+
+        // Deceleration for unpressed rotation axes — symmetric with acceleration
+        // so stopping takes the same time as spinning up.
+        if !inputs.contains(&PlayerInput::PitchCW) && !inputs.contains(&PlayerInput::PitchCCW) {
+            damp_axis(&mut body.angular_vel, right, damp);
+        }
+        if !inputs.contains(&PlayerInput::YawCW) && !inputs.contains(&PlayerInput::YawCCW) {
+            damp_axis(&mut body.angular_vel, up, damp);
+        }
+        if !inputs.contains(&PlayerInput::RollCW) && !inputs.contains(&PlayerInput::RollCCW) {
+            damp_axis(&mut body.angular_vel, forward, damp);
         }
     }
 }
