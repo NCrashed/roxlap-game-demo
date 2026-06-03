@@ -187,12 +187,12 @@ pub enum PlayerInput {
 impl PlayerInput {
     pub fn from_scancode(scancode: Scancode) -> Option<Self> {
         match scancode {
-            Scancode::A => Some(PlayerInput::RollCCW),
-            Scancode::D => Some(PlayerInput::RollCW),
+            Scancode::A => Some(PlayerInput::YawCCW),
+            Scancode::D => Some(PlayerInput::YawCW),
             Scancode::W => Some(PlayerInput::PitchCCW),
             Scancode::S => Some(PlayerInput::PitchCW),
-            Scancode::Q => Some(PlayerInput::YawCCW),
-            Scancode::E => Some(PlayerInput::YawCW),
+            Scancode::Q => Some(PlayerInput::RollCCW),
+            Scancode::E => Some(PlayerInput::RollCW),
             Scancode::LShift => Some(PlayerInput::IncTrust),
             Scancode::LCtrl => Some(PlayerInput::DecTrust),
             _ => None,
