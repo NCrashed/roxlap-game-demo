@@ -28,6 +28,10 @@ pub fn render(
     #[resource] perf: &mut PerformanceInfo,
     world: &SubWorld,
 ) {
+    // Start measuring actual work time — stopped just before canvas.present() so
+    // the vsync block is excluded.
+    let t_frame = Instant::now();
+
     // Push per-frame engine state onto the scratch pool (sky colour, side shades).
     let sky = engine.sky_color();
     let sky_i = i32::from_ne_bytes(sky.to_ne_bytes());
@@ -98,6 +102,8 @@ pub fn render(
         .copy(&render_tex.0, None, None)
         .unwrap();
     perf.upload_us_raw = t_upload.elapsed().as_micros() as u64;
+
+    perf.frame_time_us_raw = t_frame.elapsed().as_micros() as u64;
 
     font_renderer.draw_text(
         &mut canvas_resources.canvas,
