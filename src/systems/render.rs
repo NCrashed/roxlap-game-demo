@@ -109,8 +109,11 @@ pub fn render(
         &mut canvas_resources.canvas,
         &canvas_resources.texture_creator,
         &format!(
-            "FPS {}\nFRAME  {} us\nOPTI   {} us\nUPLOAD {} us",
-            perf.fps, perf.frame_time_us, perf.opticast_us, perf.upload_us
+            "FPS {}\nFRAME  {:.2} ms\nOPTI   {:.2} ms\nUPLOAD {:.2} ms",
+            perf.fps,
+            perf.frame_time_us as f64 / 1000.0,
+            perf.opticast_us as f64 / 1000.0,
+            perf.upload_us as f64 / 1000.0,
         ),
         4,
         4,
