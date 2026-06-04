@@ -58,6 +58,9 @@ pub struct RenderBuffers {
     pub pool: ScratchPool,
     pub framebuffer: Vec<u32>,
     pub zbuffer: Vec<f32>,
+    /// Secondary buffers for the cube rendering pass.
+    pub cube_fb: Vec<u32>,
+    pub cube_zb: Vec<f32>,
     pub width: u32,
     pub height: u32,
 }
@@ -65,10 +68,14 @@ pub struct RenderBuffers {
 impl RenderBuffers {
     pub fn new(width: u32, height: u32, vsid: u32) -> Self {
         let n = (width * height) as usize;
+        // Pool must be large enough for both the ground (vsid) and the cube VXL.
+        let pool_vsid = vsid.max(CUBE_VXL_VSID);
         Self {
-            pool: ScratchPool::new(width, height, vsid),
+            pool: ScratchPool::new(width, height, pool_vsid),
             framebuffer: vec![0u32; n],
             zbuffer: vec![0.0f32; n],
+            cube_fb: vec![0u32; n],
+            cube_zb: vec![0.0f32; n],
             width,
             height,
         }
@@ -117,14 +124,15 @@ const VSID: u32 = 32;
 /// for the camera and the cube.
 const GROUND_Z: i32 = 200;
 
-/// Edge length of the demo cube, in voxels.
-pub const CUBE_EDGE: i32 = 10;
+/// Cube VXL dimensions. Separate from the ground world (VSID=32).
+pub const CUBE_VXL_VSID: u32 = 128;
+pub const CUBE_VXL_EDGE: i32 = 64;
 
 /// Voxlap colour packing: `(brightness << 24) | (R << 16) | (G << 8) | B`.
 /// `0x80` brightness is voxlap's neutral; the `update_lighting` bake
 /// overwrites it with directional shading.
 const GROUND_COL: u32 = 0x80_5a_a0_5a; // mossy green
-pub const CUBE_COL: u32 = 0x80_c0_60_30; // warm orange
+const CUBE_COL: u32 = 0x80_c0_60_30; // warm orange
 
 fn build_world() -> Vxl {
     let vsid_u = VSID as usize;
@@ -144,9 +152,37 @@ fn build_world() -> Vxl {
     pack_dense_grid_to_vxl(&mask, &colour, VSID)
 }
 
-/// Ground-only world used as a base each frame. The rotating cube is
-/// stamped into a per-frame clone inside the render system.
-pub struct BaseWorld(pub Vxl);
+fn build_cube_vxl() -> Vxl {
+    let vsid = CUBE_VXL_VSID as usize;
+    let maxz_u = MAXZDIM as usize;
+    let cells = vsid * vsid * maxz_u;
+
+    let mut mask = vec![0u8; cells];
+    let mut colour = vec![0u32; cells];
+    let idx = |x: usize, y: usize, z: usize| -> usize { (y * vsid + x) * maxz_u + z };
+
+    let half = (CUBE_VXL_EDGE / 2) as usize;
+    let center = vsid / 2; // 64
+    let lo = center - half; // 32
+    let hi = center + half; // 96 (exclusive)
+
+    for y in lo..hi {
+        for x in lo..hi {
+            for z in lo..hi {
+                mask[idx(x, y, z)] = 1;
+                colour[idx(x, y, z)] = CUBE_COL;
+            }
+        }
+    }
+    pack_dense_grid_to_vxl(&mask, &colour, CUBE_VXL_VSID)
+}
+
+/// Holds both the static ground world and the pre-lit cube VXL.
+/// Bundled into one resource to stay within Legion's 8-resource-per-system limit.
+pub struct Worlds {
+    pub base: Vxl,
+    pub cube: Vxl,
+}
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PlayerInput {
@@ -204,7 +240,6 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
     engine.set_lightmode(1);
 
     let mut vxl = build_world();
-    // Bake directional lighting once at startup — NOT every frame.
     update_lighting(
         &mut vxl.data,
         &vxl.column_offset,
@@ -214,6 +249,21 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
         0,
         vxl.vsid as i32,
         vxl.vsid as i32,
+        MAXZDIM,
+        engine.lightmode(),
+        engine.lights(),
+    );
+
+    let mut cube_vxl = build_cube_vxl();
+    update_lighting(
+        &mut cube_vxl.data,
+        &cube_vxl.column_offset,
+        cube_vxl.vsid,
+        0,
+        0,
+        0,
+        cube_vxl.vsid as i32,
+        cube_vxl.vsid as i32,
         MAXZDIM,
         engine.lightmode(),
         engine.lights(),
@@ -229,8 +279,7 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
         VSID,
     ));
     resources.insert(HashSet::<PlayerInput>::new());
-    vxl.reserve_edit_capacity(64 * 1024);
-    resources.insert(BaseWorld(vxl));
+    resources.insert(Worlds { base: vxl, cube: cube_vxl });
     resources.insert(FrameTimer(Instant::now()));
     resources.insert(Dt(0.0));
     resources.insert(FontRenderer::new());
@@ -276,8 +325,10 @@ fn main() {
 
         let cx = f64::from(VSID) * 0.5;
         let cy = f64::from(VSID) * 0.5;
-        let cz = f64::from(GROUND_Z) - f64::from(CUBE_EDGE) - 6.0;
-        let pos = DVec3::new(cx - 16.0, cy, cz);
+        // Camera starts ~100 voxels above and 90 voxels to the side of
+        // the 64-voxel cube, giving a view from above-left.
+        let cz = f64::from(GROUND_Z) - f64::from(CUBE_VXL_EDGE) - 80.0;
+        let pos = DVec3::new(cx - 90.0, cy, cz);
         let fwd = orientation * DVec3::NEG_Z;
         let right = orientation * DVec3::X;
         let up = orientation * DVec3::Y;
@@ -299,13 +350,13 @@ fn main() {
         ));
     }
 
-    // Cube entity: spins in place, no translation.
-    // Center matches the original static cube placement.
+    // Cube entity: spins in place above the ground plane.
+    // pos = world-space center of the cube (sits on ground at z=GROUND_Z).
     {
         let cube_center = DVec3::new(
-            f64::from(VSID) / 2.0 - 0.5,
-            f64::from(VSID) / 2.0 - 0.5,
-            f64::from(GROUND_Z) - f64::from(CUBE_EDGE) / 2.0 - 0.5,
+            f64::from(VSID) / 2.0,
+            f64::from(VSID) / 2.0,
+            f64::from(GROUND_Z) - f64::from(CUBE_VXL_EDGE) / 2.0,
         );
         world.push((
             CubeMarker,

@@ -3,9 +3,8 @@ use std::time::Instant;
 use glam::DVec3;
 use legion::{system, world::SubWorld, IntoQuery};
 use roxlap_core::{
-    opticast, scalar_rasterizer::ScalarRasterizer, Engine, GridView, OpticastSettings,
+    opticast, scalar_rasterizer::ScalarRasterizer, Camera, Engine, GridView, OpticastSettings,
 };
-use roxlap_formats::edit::set_cube;
 use sdl2::pixels::{Color, PixelFormatEnum};
 
 use crate::{
@@ -14,7 +13,7 @@ use crate::{
     },
     fonts::FontRenderer,
     systems::performance_info::PerformanceInfo,
-    BaseWorld, CanvasResources, RenderBuffers, RenderTexture, WindowSize,
+    CanvasResources, RenderBuffers, RenderTexture, WindowSize, Worlds,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -24,7 +23,7 @@ use crate::{
 #[read_component(NewtonBody)]
 pub fn render(
     #[resource] canvas_resources: &mut CanvasResources,
-    #[resource] base_world: &BaseWorld,
+    #[resource] worlds: &Worlds,
     #[resource] engine: &Engine,
     #[resource] render_tex: &mut RenderTexture,
     #[resource] buffers: &mut RenderBuffers,
@@ -46,7 +45,7 @@ pub fn render(
             .expect("resize texture failed");
     }
 
-    // Push per-frame engine state onto the scratch pool (sky colour, side shades).
+    // Push per-frame engine state onto the scratch pool.
     let sky = engine.sky_color();
     let sky_i = i32::from_ne_bytes(sky.to_ne_bytes());
     buffers.pool.set_skycast(sky_i, 0);
@@ -64,41 +63,13 @@ pub fn render(
             .0
     };
 
-    buffers.framebuffer.fill(sky);
-
-    // Clone base world and stamp the rotating cube into it each frame.
-    let cube_body = {
-        let mut q = <(&CubeMarker, &NewtonBody)>::query();
-        q.iter(world).next().map(|(_, b)| (b.orientation, b.pos))
-    };
-    let mut frame_world = base_world.0.clone();
-    if let Some((orientation, center)) = cube_body {
-        for lx in 0..crate::CUBE_EDGE {
-            for ly in 0..crate::CUBE_EDGE {
-                for lz in 0..crate::CUBE_EDGE {
-                    let local = DVec3::new(
-                        lx as f64 - f64::from(crate::CUBE_EDGE) / 2.0 + 0.5,
-                        ly as f64 - f64::from(crate::CUBE_EDGE) / 2.0 + 0.5,
-                        lz as f64 - f64::from(crate::CUBE_EDGE) / 2.0 + 0.5,
-                    );
-                    let wp = center + orientation * local;
-                    set_cube(
-                        &mut frame_world,
-                        wp.x.round() as i32,
-                        wp.y.round() as i32,
-                        wp.z.round() as i32,
-                        Some(crate::CUBE_COL),
-                    );
-                }
-            }
-        }
-    }
-
-    // --- Phase 1: opticast (CPU ray-cast) ---
-    let t_opticast = Instant::now();
     let settings = OpticastSettings::for_oracle_framebuffer(w, h);
+
+    // --- Pass 1: ground world ---
+    buffers.framebuffer.fill(sky);
+    let t_opticast = Instant::now();
     {
-        let grid = GridView::from_single_vxl(&frame_world);
+        let grid = GridView::from_single_vxl(&worlds.base);
         let mut rasterizer = ScalarRasterizer::new(
             &mut buffers.framebuffer,
             &mut buffers.zbuffer,
@@ -107,9 +78,58 @@ pub fn render(
         );
         let _ = opticast(&mut rasterizer, &mut buffers.pool, camera, &settings, grid);
     }
+
+    // --- Pass 2: rotating cube (camera-inverse-rotation) ---
+    let cube_body = {
+        let mut q = <(&CubeMarker, &NewtonBody)>::query();
+        q.iter(world).next().map(|(_, b)| (b.orientation, b.pos))
+    };
+    if let Some((orientation, cube_center)) = cube_body {
+        // VXL local center = (VSID/2 - 0.5) on each axis.
+        let vxl_half = f64::from(crate::CUBE_VXL_VSID) / 2.0 - 0.5;
+        let vxl_center = DVec3::splat(vxl_half);
+
+        // World position of VXL local origin (0,0,0).
+        let vxl_origin = cube_center - vxl_center;
+
+        let inv = orientation.inverse();
+        let world_pos = DVec3::from(camera.pos);
+
+        let cube_cam = Camera {
+            pos: (inv * (world_pos - vxl_origin)).to_array(),
+            forward: (inv * DVec3::from(camera.forward)).to_array(),
+            right: (inv * DVec3::from(camera.right)).to_array(),
+            down: (inv * DVec3::from(camera.down)).to_array(),
+        };
+
+        buffers.pool.set_skycast(sky_i, 0);
+        buffers.pool.set_side_shades(s[0], s[1], s[2], s[3], s[4], s[5]);
+
+        buffers.cube_fb.fill(sky);
+        buffers.cube_zb.fill(0.0);
+        {
+            let grid = GridView::from_single_vxl(&worlds.cube);
+            let mut rasterizer = ScalarRasterizer::new(
+                &mut buffers.cube_fb,
+                &mut buffers.cube_zb,
+                w as usize,
+                grid,
+            );
+            let _ = opticast(&mut rasterizer, &mut buffers.pool, &cube_cam, &settings, grid);
+        }
+
+        // Composite: cube pixels (zbuffer > 0 = geometry hit) over world.
+        let n = (w * h) as usize;
+        for i in 0..n {
+            if buffers.cube_zb[i] > 0.0 {
+                buffers.framebuffer[i] = buffers.cube_fb[i];
+            }
+        }
+    }
+
     perf.opticast_us_raw = t_opticast.elapsed().as_micros() as u64;
 
-    // --- Phase 2: SDL2 texture upload + blit ---
+    // --- Phase 3: SDL2 texture upload + blit ---
     let t_upload = Instant::now();
     render_tex
         .0
