@@ -20,6 +20,9 @@ cargo check
 # Lint
 cargo clippy
 
+# Format
+cargo fmt
+
 # Run with logging
 RUST_LOG=info cargo run
 ```
@@ -36,3 +39,7 @@ This is a Rust game demo using the **Legion ECS** framework with a fixed set of 
 - Body-local axes: **−Z = forward (nose)**, **+X = right**, **+Y = up**
 - The `Camera` struct voxlap expects uses `forward`, `right`, and `down` (not `up`); the render system negates the body's `+Y` to produce `down`
 - `VSID = 32` sets the voxel world grid dimension (32×32 columns)
+
+## Before committing
+
+Run `cargo fmt` and `cargo test` before every commit.

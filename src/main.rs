@@ -166,7 +166,7 @@ fn build_world() -> Vxl {
     world
 }
 
-#[derive(PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PlayerInput {
     PitchCW,
     PitchCCW,
@@ -176,6 +176,7 @@ pub enum PlayerInput {
     RollCCW,
     IncTrust,
     DecTrust,
+    Damp,
 }
 
 impl PlayerInput {
@@ -189,6 +190,7 @@ impl PlayerInput {
             Scancode::E => Some(PlayerInput::RollCW),
             Scancode::LShift => Some(PlayerInput::IncTrust),
             Scancode::LCtrl => Some(PlayerInput::DecTrust),
+            Scancode::Tab => Some(PlayerInput::Damp),
             _ => None,
         }
     }

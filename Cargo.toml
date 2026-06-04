@@ -21,6 +21,9 @@ version = "0.38"
 default-features = false
 features = ["mixer", "gfx", "ttf", "unsafe_textures"]
 
+[dev-dependencies]
+proptest = "1"
+
 [dependencies.legion]
 version = "0.4.0"
 default-features = false
