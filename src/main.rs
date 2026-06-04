@@ -116,7 +116,7 @@ fn initialize() -> Result<(WindowCanvas, EventPump), String> {
     Ok((canvas, event_pump))
 }
 
-const VSID: u32 = 32;
+const VSID: u32 = 128;
 
 /// Z-coord of the (one-voxel-thick) ground plane. Voxlap is **z-down**:
 /// small z is up, large z is down. `200` puts the floor near the
@@ -356,7 +356,7 @@ fn main() {
         let cube_center = DVec3::new(
             f64::from(VSID) / 2.0,
             f64::from(VSID) / 2.0,
-            f64::from(GROUND_Z) - f64::from(CUBE_VXL_EDGE) / 2.0,
+            f64::from(GROUND_Z) - f64::from(CUBE_VXL_EDGE) / 2.0 - 15.0,
         );
         world.push((
             CubeMarker,
