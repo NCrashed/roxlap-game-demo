@@ -8,7 +8,7 @@ use std::time::Instant;
 use glam::{DMat3, DQuat, DVec3};
 use legion::{Resources, Schedule, World};
 use roxlap_cavegen::pack_dense_grid_to_vxl;
-use roxlap_core::{rasterizer::ScratchPool, update_lighting, Engine};
+use roxlap_core::{rasterizer::ScratchPool, update_lighting, Camera, Engine};
 use roxlap_formats::{
     edit::{set_rect, MAXZDIM},
     vxl::Vxl,
@@ -23,9 +23,10 @@ use sdl2::{
     EventPump,
 };
 
-use crate::components::{miner::Miner, newton_body::NewtonBody};
+use crate::components::{camera::CameraComponent, miner::Miner, newton_body::NewtonBody};
 use crate::fonts::FontRenderer;
 use crate::systems::{
+    camera::camera_update_system,
     miner_input::miner_input_system,
     newton_body::newton_body_system,
     performance_info::{update_info_system, PerformanceInfo},
@@ -269,6 +270,7 @@ fn main() {
         .add_system(update_info_system())
         .add_system(miner_input_system())
         .add_system(newton_body_system())
+        .add_system(camera_update_system())
         .add_thread_local(render_system())
         .build();
     let mut world = World::default();
@@ -297,15 +299,25 @@ fn main() {
         let cx = f64::from(VSID) * 0.5;
         let cy = f64::from(VSID) * 0.5;
         let cz = f64::from(GROUND_Z) - f64::from(CUBE_EDGE) - 6.0;
+        let pos = DVec3::new(cx - 16.0, cy, cz);
+        let fwd = orientation * DVec3::NEG_Z;
+        let right = orientation * DVec3::X;
+        let up = orientation * DVec3::Y;
         world.push((
             Miner { x: 0.0, y: 0.0 },
             NewtonBody {
                 mass: 1.0,
-                pos: DVec3::new(cx - 16.0, cy, cz),
+                pos,
                 vel: DVec3::ZERO,
                 orientation,
                 angular_vel: DVec3::ZERO,
             },
+            CameraComponent(Camera {
+                pos: pos.to_array(),
+                forward: fwd.to_array(),
+                right: right.to_array(),
+                down: (-up).to_array(),
+            }),
         ));
     }
 

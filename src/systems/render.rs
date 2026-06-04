@@ -1,23 +1,21 @@
 use std::time::Instant;
 
-use glam::DVec3;
 use legion::{system, world::SubWorld, IntoQuery};
 use roxlap_core::{
-    opticast, scalar_rasterizer::ScalarRasterizer, Camera, Engine, GridView, OpticastSettings,
+    opticast, scalar_rasterizer::ScalarRasterizer, Engine, GridView, OpticastSettings,
 };
 use roxlap_formats::vxl::Vxl;
 use sdl2::pixels::{Color, PixelFormatEnum};
 
 use crate::{
-    components::{miner::Miner, newton_body::NewtonBody},
+    components::camera::CameraComponent,
     fonts::FontRenderer,
     systems::performance_info::PerformanceInfo,
     CanvasResources, RenderBuffers, RenderTexture, WindowSize,
 };
 
 #[system]
-#[read_component(Miner)]
-#[read_component(NewtonBody)]
+#[read_component(CameraComponent)]
 pub fn render(
     #[resource] canvas_resources: &mut CanvasResources,
     #[resource] world_map: &Vxl,
@@ -49,37 +47,9 @@ pub fn render(
     let s = engine.side_shades();
     buffers.pool.set_side_shades(s[0], s[1], s[2], s[3], s[4], s[5]);
 
-    // Translate the miner's rigid-body state to a voxlap Camera.
-    //
-    // Body-local axis conventions (matching miner_input.rs):
-    //   -Z = nose (forward), +X = right wing, +Y = top of body
-    //
-    // Rotating each body-local axis by `orientation` gives its world-space
-    // direction. Voxlap's Camera wants `down` (not `up`), so we negate Y.
     let camera = {
-        let mut query = <(&Miner, &NewtonBody)>::query();
-        if let Some((_, body)) = query.iter(world).next() {
-            let fwd = body.orientation * DVec3::NEG_Z;
-            let right = body.orientation * DVec3::X;
-            let up = body.orientation * DVec3::Y;
-            Camera {
-                pos: body.pos.to_array(),
-                forward: fwd.to_array(),
-                right: right.to_array(),
-                down: (-up).to_array(),
-            }
-        } else {
-            let cx = f64::from(crate::VSID) * 0.5;
-            let cy = f64::from(crate::VSID) * 0.5;
-            let cz = f64::from(crate::GROUND_Z) - f64::from(crate::CUBE_EDGE) - 6.0;
-            let (sp, cp) = (0.15_f64.sin(), 0.15_f64.cos());
-            Camera {
-                pos: [cx - 16.0, cy, cz],
-                forward: [cp, 0.0, sp],
-                right: [0.0, 1.0, 0.0],
-                down: [-sp, 0.0, cp],
-            }
-        }
+        let mut query = <&CameraComponent>::query();
+        &query.iter(world).next().expect("no CameraComponent entity").0
     };
 
     buffers.framebuffer.fill(sky);
