@@ -1,16 +1,15 @@
 mod components;
 mod fonts;
 mod systems;
+mod world;
 
 use std::collections::HashSet;
 use std::time::Instant;
 
 use glam::{DMat3, DQuat, DVec3};
-use rand::RngExt;
 use legion::{Resources, Schedule, World};
-use roxlap_cavegen::pack_dense_grid_to_vxl;
 use roxlap_core::{rasterizer::ScratchPool, update_lighting, Camera, Engine};
-use roxlap_formats::{edit::MAXZDIM, vxl::Vxl};
+use roxlap_formats::edit::MAXZDIM;
 use sdl2::{
     event::{Event, WindowEvent},
     keyboard::Scancode,
@@ -21,6 +20,9 @@ use sdl2::{
     EventPump,
 };
 
+use crate::world::{
+    build_cube_vxl, build_world, Worlds, CUBE_VXL_EDGE, CUBE_VXL_VSID, GROUND_Z, VSID,
+};
 use crate::components::{
     camera::CameraComponent, cube_marker::CubeMarker, miner::Miner, newton_body::NewtonBody,
 };
@@ -120,82 +122,6 @@ fn initialize() -> Result<(WindowCanvas, EventPump), String> {
     Ok((canvas, event_pump))
 }
 
-const VSID: u32 = 64;
-
-/// Z-coord of the (one-voxel-thick) ground plane. Voxlap is **z-down**:
-/// small z is up, large z is down. `200` puts the floor near the
-/// bottom of the voxlap z-range with ~200 voxels of empty air above
-/// for the camera and the cube.
-const GROUND_Z: i32 = 200;
-
-/// Cube VXL dimensions. Separate from the ground world (VSID=32).
-pub const CUBE_VXL_VSID: u32 = 16;
-pub const CUBE_VXL_EDGE: i32 = 16;
-
-/// Voxlap colour packing: `(brightness << 24) | (R << 16) | (G << 8) | B`.
-/// `0x80` brightness is voxlap's neutral; the `update_lighting` bake
-/// overwrites it with directional shading.
-
-fn build_world() -> Vxl {
-    let vsid_u = VSID as usize;
-    let maxz_u = MAXZDIM as usize;
-    let cells = vsid_u * vsid_u * maxz_u;
-
-    let mut mask = vec![0u8; cells];
-    let mut colour = vec![0u32; cells];
-    let idx = |x: usize, y: usize, z: usize| -> usize { (y * vsid_u + x) * maxz_u + z };
-    let mut rng = rand::rng();
-    for y in 0..vsid_u {
-        for x in 0..vsid_u {
-            let i = idx(x, y, GROUND_Z as usize);
-            let r = rng.random::<u8>() as u32;
-            let g = rng.random::<u8>() as u32;
-            let b = rng.random::<u8>() as u32;
-            mask[i] = 1;
-            colour[i] = 0x80_00_00_00 | (r << 16) | (g << 8) | b;
-        }
-    }
-    pack_dense_grid_to_vxl(&mask, &colour, VSID)
-}
-
-fn build_cube_vxl() -> Vxl {
-    let vsid = CUBE_VXL_VSID as usize;
-    let maxz_u = MAXZDIM as usize;
-    let cells = vsid * vsid * maxz_u;
-
-    let mut mask = vec![0u8; cells];
-    let mut colour = vec![0u32; cells];
-    let idx = |x: usize, y: usize, z: usize| -> usize { (y * vsid + x) * maxz_u + z };
-
-    let center = CUBE_VXL_VSID as f64 / 2.0;
-    let radius = center - 0.5;
-
-    let mut rng = rand::rng();
-    for y in 0..vsid {
-        for x in 0..vsid {
-            for z in 0..vsid {
-                let dx = x as f64 + 0.5 - center;
-                let dy = y as f64 + 0.5 - center;
-                let dz = z as f64 + 0.5 - center;
-                if dx * dx + dy * dy + dz * dz <= radius * radius {
-                    let r = rng.random::<u8>() as u32;
-                    let g = rng.random::<u8>() as u32;
-                    let b = rng.random::<u8>() as u32;
-                    mask[idx(x, y, z)] = 1;
-                    colour[idx(x, y, z)] = 0x80_00_00_00 | (r << 16) | (g << 8) | b;
-                }
-            }
-        }
-    }
-    pack_dense_grid_to_vxl(&mask, &colour, CUBE_VXL_VSID)
-}
-
-/// Holds both the static ground world and the pre-lit cube VXL.
-/// Bundled into one resource to stay within Legion's 8-resource-per-system limit.
-pub struct Worlds {
-    pub base: Vxl,
-    pub cube: Vxl,
-}
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PlayerInput {
