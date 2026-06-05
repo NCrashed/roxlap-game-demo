@@ -1,6 +1,13 @@
+use glam::{DMat3, DQuat, DVec3};
+use legion::World;
 use rand::RngExt;
 use roxlap_cavegen::pack_dense_grid_to_vxl;
+use roxlap_core::Camera;
 use roxlap_formats::{edit::MAXZDIM, vxl::Vxl};
+
+use crate::components::{
+    camera::CameraComponent, cube_marker::CubeMarker, miner::Miner, newton_body::NewtonBody,
+};
 
 pub const VSID: u32 = 64;
 
@@ -68,4 +75,62 @@ pub fn build_cube_vxl() -> Vxl {
         }
     }
     pack_dense_grid_to_vxl(&mask, &colour, CUBE_VXL_VSID)
+}
+
+pub fn populate_world(world: &mut World) {
+    spawn_miner(world);
+    spawn_cube(world);
+}
+
+fn spawn_miner(world: &mut World) {
+    let pitch: f64 = 0.8;
+    let (sp, cp) = (pitch.sin(), pitch.cos());
+    let orientation = DQuat::from_mat3(&DMat3::from_cols(
+        DVec3::Y,
+        DVec3::new(-sp, 0.0, cp),
+        DVec3::new(-cp, 0.0, -sp),
+    ))
+    .normalize();
+    let pos = DVec3::new(
+        f64::from(VSID) * 0.5 - 70.0,
+        f64::from(VSID) * 0.5,
+        f64::from(GROUND_Z) - 100.0,
+    );
+    let fwd = orientation * DVec3::NEG_Z;
+    let right = orientation * DVec3::X;
+    let up = orientation * DVec3::Y;
+    world.push((
+        Miner,
+        NewtonBody {
+            mass: 1.0,
+            pos,
+            vel: DVec3::ZERO,
+            orientation,
+            angular_vel: DVec3::ZERO,
+        },
+        CameraComponent(Camera {
+            pos: pos.to_array(),
+            forward: fwd.to_array(),
+            right: right.to_array(),
+            down: (-up).to_array(),
+        }),
+    ));
+}
+
+fn spawn_cube(world: &mut World) {
+    let pos = DVec3::new(
+        f64::from(VSID) / 2.0,
+        f64::from(VSID) / 2.0,
+        f64::from(GROUND_Z) - f64::from(CUBE_VXL_EDGE) / 2.0 - 15.0,
+    );
+    world.push((
+        CubeMarker,
+        NewtonBody {
+            mass: 1.0,
+            pos,
+            vel: DVec3::ZERO,
+            orientation: DQuat::IDENTITY,
+            angular_vel: DVec3::new(0.3, 0.2, 0.1),
+        },
+    ));
 }

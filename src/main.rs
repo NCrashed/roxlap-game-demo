@@ -1,14 +1,14 @@
 mod components;
 mod fonts;
+mod input;
 mod systems;
 mod world;
 
 use std::collections::HashSet;
 use std::time::Instant;
 
-use glam::{DMat3, DQuat, DVec3};
 use legion::{Resources, Schedule, World};
-use roxlap_core::{rasterizer::ScratchPool, update_lighting, Camera, Engine};
+use roxlap_core::{rasterizer::ScratchPool, update_lighting, Engine};
 use roxlap_formats::edit::MAXZDIM;
 use sdl2::{
     event::{Event, WindowEvent},
@@ -20,11 +20,9 @@ use sdl2::{
     EventPump,
 };
 
+use crate::input::PlayerInput;
 use crate::world::{
-    build_cube_vxl, build_world, Worlds, CUBE_VXL_EDGE, CUBE_VXL_VSID, GROUND_Z, VSID,
-};
-use crate::components::{
-    camera::CameraComponent, cube_marker::CubeMarker, miner::Miner, newton_body::NewtonBody,
+    build_cube_vxl, build_world, populate_world, Worlds, CUBE_VXL_VSID, VSID,
 };
 use crate::fonts::FontRenderer;
 use crate::systems::{
@@ -123,35 +121,6 @@ fn initialize() -> Result<(WindowCanvas, EventPump), String> {
 }
 
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum PlayerInput {
-    PitchCW,
-    PitchCCW,
-    YawCW,
-    YawCCW,
-    RollCW,
-    RollCCW,
-    IncTrust,
-    DecTrust,
-    Damp,
-}
-
-impl PlayerInput {
-    pub fn from_scancode(scancode: Scancode) -> Option<Self> {
-        match scancode {
-            Scancode::A => Some(PlayerInput::YawCW),
-            Scancode::D => Some(PlayerInput::YawCCW),
-            Scancode::W => Some(PlayerInput::PitchCW),
-            Scancode::S => Some(PlayerInput::PitchCCW),
-            Scancode::Q => Some(PlayerInput::RollCCW),
-            Scancode::E => Some(PlayerInput::RollCW),
-            Scancode::LShift => Some(PlayerInput::IncTrust),
-            Scancode::LCtrl => Some(PlayerInput::DecTrust),
-            Scancode::Tab => Some(PlayerInput::Damp),
-            _ => None,
-        }
-    }
-}
 
 fn initial_resources(canvas: Canvas<Window>) -> Resources {
     let mut resources = Resources::default();
@@ -227,88 +196,27 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
     resources
 }
 
+fn build_schedule() -> Schedule {
+    Schedule::builder()
+        .add_system(update_info_system())
+        .add_system(miner_input_system())
+        .add_system(newton_body_system())
+        .add_system(camera_update_system())
+        .add_thread_local(render_system())
+        .build()
+}
+
 fn main() {
     std::env::set_var("RUST_LOG", "info");
     std::env::set_var("RUST_BACKTRACE", "1");
     env_logger::init();
     let (canvas, mut event_pump) = initialize().unwrap();
 
-    let mut schedule = Schedule::builder()
-        .add_system(update_info_system())
-        .add_system(miner_input_system())
-        .add_system(newton_body_system())
-        .add_system(camera_update_system())
-        .add_thread_local(render_system())
-        .build();
+    let mut schedule = build_schedule();
     let mut world = World::default();
     let mut resources = initial_resources(canvas);
 
-    // Spawn the player entity.  Initial orientation matches the old hardcoded
-    // demo camera: looking toward +X (yaw=0), pitched 0.15 rad nose-down.
-    //
-    // Body-local conventions: -Z=forward, +X=right, +Y=up.
-    // We build a rotation matrix whose columns describe where each body axis
-    // ends up in voxlap world space, then convert to a quaternion.
-    {
-        // 46° nose-down so the camera looks at the ground beneath the cube.
-        let pitch: f64 = 0.8;
-        let (sp, cp) = (pitch.sin(), pitch.cos());
-        // where body +X goes  →  world +Y  (right wing = horizontal right)
-        // where body +Y goes  →  world (-sp, 0, cp)  (top = voxlap-sky direction)
-        // where body +Z goes  →  world (-cp, 0, -sp)  (tail = -forward)
-        let orientation = DQuat::from_mat3(&DMat3::from_cols(
-            DVec3::Y,
-            DVec3::new(-sp, 0.0, cp),
-            DVec3::new(-cp, 0.0, -sp),
-        ))
-        .normalize();
-
-        let cx = f64::from(VSID) * 0.5;
-        let cy = f64::from(VSID) * 0.5;
-        // 100 voxels above the ground, 70 to the left of world centre.
-        // At pitch=0.8 the forward ray hits the ground within the 128-wide world.
-        let cz = f64::from(GROUND_Z) - 100.0;
-        let pos = DVec3::new(cx - 70.0, cy, cz);
-        let fwd = orientation * DVec3::NEG_Z;
-        let right = orientation * DVec3::X;
-        let up = orientation * DVec3::Y;
-        world.push((
-            Miner,
-            NewtonBody {
-                mass: 1.0,
-                pos,
-                vel: DVec3::ZERO,
-                orientation,
-                angular_vel: DVec3::ZERO,
-            },
-            CameraComponent(Camera {
-                pos: pos.to_array(),
-                forward: fwd.to_array(),
-                right: right.to_array(),
-                down: (-up).to_array(),
-            }),
-        ));
-    }
-
-    // Cube entity: spins in place above the ground plane.
-    // pos = world-space center of the cube (sits on ground at z=GROUND_Z).
-    {
-        let cube_center = DVec3::new(
-            f64::from(VSID) / 2.0,
-            f64::from(VSID) / 2.0,
-            f64::from(GROUND_Z) - f64::from(CUBE_VXL_EDGE) / 2.0 - 15.0,
-        );
-        world.push((
-            CubeMarker,
-            NewtonBody {
-                mass: 1.0,
-                pos: cube_center,
-                vel: DVec3::ZERO,
-                orientation: DQuat::IDENTITY,
-                angular_vel: DVec3::new(0.3, 0.2, 0.1),
-            },
-        ));
-    }
+    populate_world(&mut world);
 
     'running: loop {
         {

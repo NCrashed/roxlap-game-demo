@@ -5,7 +5,8 @@ use legion::{world::SubWorld, *};
 
 use crate::{
     components::{miner::Miner, newton_body::NewtonBody},
-    Dt, PlayerInput,
+    input::PlayerInput,
+    Dt,
 };
 
 const ANGULAR_ACCEL: f64 = 1.2;
