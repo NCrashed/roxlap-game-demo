@@ -12,7 +12,7 @@ pub struct NewtonBody {
 }
 
 impl NewtonBody {
-    pub fn update_a(&mut self, dt: &Dt) {
+    pub fn integrate_rotation(&mut self, dt: &Dt) {
         self.orientation =
             (DQuat::from_scaled_axis(self.angular_vel * dt.0) * self.orientation).normalize();
     }

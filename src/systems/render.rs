@@ -8,12 +8,13 @@ use roxlap_core::{
 };
 use roxlap_formats::vxl::Vxl;
 use sdl2::pixels::{Color, PixelFormatEnum};
+use sdl2::rect::Point;
 
 use crate::{
     components::{camera::CameraComponent, cube_marker::CubeMarker, newton_body::NewtonBody},
     fonts::FontRenderer,
     systems::performance_info::PerformanceInfo,
-    CanvasResources, RenderBuffers, RenderTexture, WindowSize, Worlds,
+    CanvasResources, RenderBuffers, RenderTexture, ScreenState, Worlds,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -27,14 +28,14 @@ pub fn render(
     #[resource] engine: &Engine,
     #[resource] render_tex: &mut RenderTexture,
     #[resource] buffers: &mut RenderBuffers,
-    #[resource] window_size: &WindowSize,
+    #[resource] screen: &ScreenState,
     #[resource] font_renderer: &FontRenderer,
     #[resource] perf: &mut PerformanceInfo,
     world: &SubWorld,
 ) {
     let t_frame = Instant::now();
 
-    let (w, h) = (window_size.0, window_size.1);
+    let (w, h) = (screen.w, screen.h);
     let (rw, rh) = ((w / 2).max(1), (h / 2).max(1));
 
     // Recreate buffers and texture if the window was resized.
@@ -127,7 +128,34 @@ pub fn render(
 
     perf.frame_time_us_raw = t_frame.elapsed().as_micros() as u64;
 
-    render_gui(canvas_resources, font_renderer, perf);
+    // Project the world-space target direction onto the screen.
+    // course (ship nose) is always screen center since the camera follows orientation.
+    let target_screen = {
+        let td = screen.target_dir;
+        let cam_fwd = glam::DVec3::from(camera.forward);
+        let cam_right = glam::DVec3::from(camera.right);
+        let cam_down = glam::DVec3::from(camera.down);
+        let tf = td.dot(cam_fwd);
+        let tr = td.dot(cam_right);
+        let tdown = td.dot(cam_down);
+        let rw_f = (w / 2) as f64;
+        let rh_f = (h / 2) as f64;
+        let cx_f = w as f64 / 2.0;
+        let cy_f = h as f64 / 2.0;
+        if tf > 0.01 {
+            let sx = (cx_f + tr / tf * rw_f).round() as i32;
+            let sy = (cy_f + tdown / tf * rh_f).round() as i32;
+            (sx.clamp(8, w as i32 - 8), sy.clamp(8, h as i32 - 8), false)
+        } else {
+            // Target is behind camera — push to screen edge.
+            let scale = rw_f.max(rh_f) * 2.0;
+            let sx = (cx_f + tr * scale).round() as i32;
+            let sy = (cy_f + tdown * scale).round() as i32;
+            (sx.clamp(8, w as i32 - 8), sy.clamp(8, h as i32 - 8), true)
+        }
+    };
+
+    render_gui(canvas_resources, font_renderer, perf, w, h, target_screen);
 
     canvas_resources.canvas.present();
 }
@@ -164,10 +192,48 @@ fn cube_space_camera(
     }
 }
 
+fn draw_cross(
+    canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
+    x: i32,
+    y: i32,
+    size: i32,
+    gap: i32,
+    thickness: i32,
+) {
+    for t in 0..thickness {
+        let o = t - thickness / 2;
+        let _ = canvas.draw_line(Point::new(x - size, y + o), Point::new(x - gap, y + o));
+        let _ = canvas.draw_line(Point::new(x + gap, y + o), Point::new(x + size, y + o));
+        let _ = canvas.draw_line(Point::new(x + o, y - size), Point::new(x + o, y - gap));
+        let _ = canvas.draw_line(Point::new(x + o, y + gap), Point::new(x + o, y + size));
+    }
+}
+
+fn draw_diamond(
+    canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
+    x: i32,
+    y: i32,
+    r: i32,
+    thickness: i32,
+) {
+    for t in 0..thickness {
+        let rt = r - t;
+        if rt > 0 {
+            let _ = canvas.draw_line(Point::new(x, y - rt), Point::new(x + rt, y));
+            let _ = canvas.draw_line(Point::new(x + rt, y), Point::new(x, y + rt));
+            let _ = canvas.draw_line(Point::new(x, y + rt), Point::new(x - rt, y));
+            let _ = canvas.draw_line(Point::new(x - rt, y), Point::new(x, y - rt));
+        }
+    }
+}
+
 fn render_gui(
     canvas_resources: &mut CanvasResources,
     font_renderer: &FontRenderer,
     perf: &PerformanceInfo,
+    window_w: u32,
+    window_h: u32,
+    target: (i32, i32, bool), // projected target_dir; bool = behind camera
 ) {
     font_renderer.draw_text(
         canvas_resources,
@@ -183,4 +249,16 @@ fn render_gui(
         16.0,
         Color::YELLOW,
     );
+
+    let canvas = &mut canvas_resources.canvas;
+    let cx = (window_w / 2) as i32;
+    let cy = (window_h / 2) as i32;
+
+    canvas.set_draw_color(Color::MAGENTA);
+
+    // Course indicator — ship nose, always at screen center (camera follows orientation).
+    draw_cross(canvas, cx, cy, 20, 6, 2);
+
+    // Target indicator — where the autopilot is steering toward.
+    draw_diamond(canvas, target.0, target.1, 16, 2);
 }

@@ -7,6 +7,7 @@ mod world;
 use std::collections::HashSet;
 use std::time::Instant;
 
+use glam::DVec3;
 use legion::{Resources, Schedule, World};
 use roxlap_core::{rasterizer::ScratchPool, update_lighting, Engine};
 use roxlap_formats::edit::MAXZDIM;
@@ -20,26 +21,37 @@ use sdl2::{
     EventPump,
 };
 
-use crate::input::PlayerInput;
-use crate::world::{
-    build_cube_vxl, build_world, populate_world, Worlds, CUBE_VXL_VSID, VSID,
-};
 use crate::fonts::FontRenderer;
+use crate::input::PlayerInput;
 use crate::systems::{
+    autopilot::autopilot_system,
     camera::camera_update_system,
     miner_input::miner_input_system,
     newton_body::newton_body_system,
     performance_info::{update_info_system, PerformanceInfo},
     render::render_system,
 };
+use crate::world::{build_cube_vxl, build_world, populate_world, Worlds, CUBE_VXL_VSID, VSID};
 
 const INITIAL_WINDOW_WIDTH: u32 = 1280;
 const INITIAL_WINDOW_HEIGHT: u32 = 720;
 
-/// Current window / render resolution, updated by the resize event handler.
-pub struct WindowSize(pub u32, pub u32);
+/// Window dimensions plus the world-space target direction for the rotation autopilot.
+/// Combined into one resource so the render system stays within Legion's 8-resource limit.
+pub struct ScreenState {
+    pub w: u32,
+    pub h: u32,
+    /// World-space unit vector: where the autopilot should point the ship's nose.
+    pub target_dir: DVec3,
+}
 
 pub struct Dt(pub f64);
+
+/// Accumulated mouse motion for the current frame, reset before each event poll.
+pub struct MouseDelta {
+    pub x: f32,
+    pub y: f32,
+}
 
 pub struct FrameTimer(pub Instant);
 
@@ -115,12 +127,12 @@ fn initialize() -> Result<(WindowCanvas, EventPump), String> {
 
     canvas.present();
 
+    sdl_context.mouse().set_relative_mouse_mode(true);
+
     let event_pump = sdl_context.event_pump().unwrap();
 
     Ok((canvas, event_pump))
 }
-
-
 
 fn initial_resources(canvas: Canvas<Window>) -> Resources {
     let mut resources = Resources::default();
@@ -180,14 +192,22 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
     resources.insert(engine);
     resources.insert(canvas_resources);
     resources.insert(render_texture);
-    resources.insert(WindowSize(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT));
+    resources.insert(ScreenState {
+        w: INITIAL_WINDOW_WIDTH,
+        h: INITIAL_WINDOW_HEIGHT,
+        target_dir: DVec3::NEG_Z, // ship starts facing -Z
+    });
+    resources.insert(MouseDelta { x: 0.0, y: 0.0 });
     resources.insert(RenderBuffers::new(
         INITIAL_WINDOW_WIDTH / 2,
         INITIAL_WINDOW_HEIGHT / 2,
         VSID,
     ));
     resources.insert(HashSet::<PlayerInput>::new());
-    resources.insert(Worlds { base: vxl, cube: cube_vxl });
+    resources.insert(Worlds {
+        base: vxl,
+        cube: cube_vxl,
+    });
     resources.insert(FrameTimer(Instant::now()));
     resources.insert(Dt(0.0));
     resources.insert(FontRenderer::new());
@@ -200,8 +220,9 @@ fn build_schedule() -> Schedule {
     Schedule::builder()
         .add_system(update_info_system())
         .add_system(miner_input_system())
-        .add_system(newton_body_system())
         .add_system(camera_update_system())
+        .add_system(autopilot_system())
+        .add_system(newton_body_system())
         .add_thread_local(render_system())
         .build()
 }
@@ -224,6 +245,12 @@ fn main() {
             let mut dt = resources.get_mut::<Dt>().unwrap();
             dt.0 = frame_timer.0.elapsed().as_secs_f64();
             frame_timer.0 = Instant::now();
+        }
+
+        {
+            let mut md = resources.get_mut::<MouseDelta>().unwrap();
+            md.x = 0.0;
+            md.y = 0.0;
         }
 
         for event in event_pump.poll_iter() {
@@ -255,13 +282,18 @@ fn main() {
                             .remove(&input);
                     }
                 }
+                Event::MouseMotion { xrel, yrel, .. } => {
+                    let mut md = resources.get_mut::<MouseDelta>().unwrap();
+                    md.x += xrel as f32;
+                    md.y += yrel as f32;
+                }
                 Event::Window {
                     win_event: WindowEvent::Resized(x, y),
                     ..
                 } => {
-                    let mut ws = resources.get_mut::<WindowSize>().unwrap();
-                    ws.0 = x.max(1) as u32;
-                    ws.1 = y.max(1) as u32;
+                    let mut ss = resources.get_mut::<ScreenState>().unwrap();
+                    ss.w = x.max(1) as u32;
+                    ss.h = y.max(1) as u32;
                 }
                 _ => {}
             }

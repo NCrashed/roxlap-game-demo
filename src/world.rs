@@ -29,18 +29,20 @@ fn random_voxel_colour(rng: &mut impl rand::Rng) -> u32 {
     0x80_00_00_00 | (rng.random::<u32>() & 0x00_FF_FF_FF)
 }
 
+fn voxel_idx(x: usize, y: usize, z: usize, vsid: usize) -> usize {
+    (y * vsid + x) * MAXZDIM as usize + z
+}
+
 pub fn build_world() -> Vxl {
     let vsid_u = VSID as usize;
-    let maxz_u = MAXZDIM as usize;
-    let cells = vsid_u * vsid_u * maxz_u;
+    let cells = vsid_u * vsid_u * MAXZDIM as usize;
 
     let mut mask = vec![0u8; cells];
     let mut colour = vec![0u32; cells];
-    let idx = |x: usize, y: usize, z: usize| -> usize { (y * vsid_u + x) * maxz_u + z };
     let mut rng = rand::rng();
     for y in 0..vsid_u {
         for x in 0..vsid_u {
-            let i = idx(x, y, GROUND_Z as usize);
+            let i = voxel_idx(x, y, GROUND_Z as usize, vsid_u);
             mask[i] = 1;
             colour[i] = random_voxel_colour(&mut rng);
         }
@@ -50,12 +52,10 @@ pub fn build_world() -> Vxl {
 
 pub fn build_cube_vxl() -> Vxl {
     let vsid = CUBE_VXL_VSID as usize;
-    let maxz_u = MAXZDIM as usize;
-    let cells = vsid * vsid * maxz_u;
+    let cells = vsid * vsid * MAXZDIM as usize;
 
     let mut mask = vec![0u8; cells];
     let mut colour = vec![0u32; cells];
-    let idx = |x: usize, y: usize, z: usize| -> usize { (y * vsid + x) * maxz_u + z };
 
     let center = CUBE_VXL_VSID as f64 / 2.0;
     let radius = center - 0.5;
@@ -68,8 +68,9 @@ pub fn build_cube_vxl() -> Vxl {
                 let dy = y as f64 + 0.5 - center;
                 let dz = z as f64 + 0.5 - center;
                 if dx * dx + dy * dy + dz * dz <= radius * radius {
-                    mask[idx(x, y, z)] = 1;
-                    colour[idx(x, y, z)] = random_voxel_colour(&mut rng);
+                    let i = voxel_idx(x, y, z, vsid);
+                    mask[i] = 1;
+                    colour[i] = random_voxel_colour(&mut rng);
                 }
             }
         }
