@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use glam::{DMat3, DQuat, DVec3};
+use rand::RngExt;
 use legion::{Resources, Schedule, World};
 use roxlap_cavegen::pack_dense_grid_to_vxl;
 use roxlap_core::{rasterizer::ScratchPool, update_lighting, Camera, Engine};
@@ -70,8 +71,10 @@ impl RenderBuffers {
         let n = (width * height) as usize;
         // Pool must be large enough for both the ground (vsid) and the cube VXL.
         let pool_vsid = vsid.max(CUBE_VXL_VSID);
+        let mut pool = ScratchPool::new(width, height, pool_vsid);
+        pool.set_treat_z_max_as_air(true);
         Self {
-            pool: ScratchPool::new(width, height, pool_vsid),
+            pool,
             framebuffer: vec![0u32; n],
             zbuffer: vec![0.0f32; n],
             cube_fb: vec![0u32; n],
@@ -84,6 +87,7 @@ impl RenderBuffers {
 
 fn initialize() -> Result<(WindowCanvas, EventPump), String> {
     let sdl_context = sdl2::init()?;
+    sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "best");
     let video_subsystem = sdl_context.video()?;
     let _audio = sdl_context.audio()?;
 
@@ -116,7 +120,7 @@ fn initialize() -> Result<(WindowCanvas, EventPump), String> {
     Ok((canvas, event_pump))
 }
 
-const VSID: u32 = 128;
+const VSID: u32 = 64;
 
 /// Z-coord of the (one-voxel-thick) ground plane. Voxlap is **z-down**:
 /// small z is up, large z is down. `200` puts the floor near the
@@ -125,14 +129,12 @@ const VSID: u32 = 128;
 const GROUND_Z: i32 = 200;
 
 /// Cube VXL dimensions. Separate from the ground world (VSID=32).
-pub const CUBE_VXL_VSID: u32 = 128;
-pub const CUBE_VXL_EDGE: i32 = 64;
+pub const CUBE_VXL_VSID: u32 = 16;
+pub const CUBE_VXL_EDGE: i32 = 16;
 
 /// Voxlap colour packing: `(brightness << 24) | (R << 16) | (G << 8) | B`.
 /// `0x80` brightness is voxlap's neutral; the `update_lighting` bake
 /// overwrites it with directional shading.
-const GROUND_COL: u32 = 0x80_5a_a0_5a; // mossy green
-const CUBE_COL: u32 = 0x80_c0_60_30; // warm orange
 
 fn build_world() -> Vxl {
     let vsid_u = VSID as usize;
@@ -142,11 +144,15 @@ fn build_world() -> Vxl {
     let mut mask = vec![0u8; cells];
     let mut colour = vec![0u32; cells];
     let idx = |x: usize, y: usize, z: usize| -> usize { (y * vsid_u + x) * maxz_u + z };
+    let mut rng = rand::rng();
     for y in 0..vsid_u {
         for x in 0..vsid_u {
             let i = idx(x, y, GROUND_Z as usize);
+            let r = rng.random::<u8>() as u32;
+            let g = rng.random::<u8>() as u32;
+            let b = rng.random::<u8>() as u32;
             mask[i] = 1;
-            colour[i] = GROUND_COL;
+            colour[i] = 0x80_00_00_00 | (r << 16) | (g << 8) | b;
         }
     }
     pack_dense_grid_to_vxl(&mask, &colour, VSID)
@@ -161,16 +167,23 @@ fn build_cube_vxl() -> Vxl {
     let mut colour = vec![0u32; cells];
     let idx = |x: usize, y: usize, z: usize| -> usize { (y * vsid + x) * maxz_u + z };
 
-    let half = (CUBE_VXL_EDGE / 2) as usize;
-    let center = vsid / 2; // 64
-    let lo = center - half; // 32
-    let hi = center + half; // 96 (exclusive)
+    let center = CUBE_VXL_VSID as f64 / 2.0;
+    let radius = center - 0.5;
 
-    for y in lo..hi {
-        for x in lo..hi {
-            for z in lo..hi {
-                mask[idx(x, y, z)] = 1;
-                colour[idx(x, y, z)] = CUBE_COL;
+    let mut rng = rand::rng();
+    for y in 0..vsid {
+        for x in 0..vsid {
+            for z in 0..vsid {
+                let dx = x as f64 + 0.5 - center;
+                let dy = y as f64 + 0.5 - center;
+                let dz = z as f64 + 0.5 - center;
+                if dx * dx + dy * dy + dz * dz <= radius * radius {
+                    let r = rng.random::<u8>() as u32;
+                    let g = rng.random::<u8>() as u32;
+                    let b = rng.random::<u8>() as u32;
+                    mask[idx(x, y, z)] = 1;
+                    colour[idx(x, y, z)] = 0x80_00_00_00 | (r << 16) | (g << 8) | b;
+                }
             }
         }
     }
@@ -224,8 +237,8 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
         texture_creator
             .create_texture_streaming(
                 PixelFormatEnum::ARGB8888,
-                INITIAL_WINDOW_WIDTH,
-                INITIAL_WINDOW_HEIGHT,
+                INITIAL_WINDOW_WIDTH / 2,
+                INITIAL_WINDOW_HEIGHT / 2,
             )
             .expect("failed to create render texture"),
     );
@@ -236,7 +249,7 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
     };
 
     let mut engine = Engine::new();
-    engine.set_side_shades(15, 15, 15, 15, 15, 15);
+    engine.set_side_shades(15, 0, 8, 8, 8, 8);
     engine.set_lightmode(1);
 
     let mut vxl = build_world();
@@ -274,8 +287,8 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
     resources.insert(render_texture);
     resources.insert(WindowSize(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT));
     resources.insert(RenderBuffers::new(
-        INITIAL_WINDOW_WIDTH,
-        INITIAL_WINDOW_HEIGHT,
+        INITIAL_WINDOW_WIDTH / 2,
+        INITIAL_WINDOW_HEIGHT / 2,
         VSID,
     ));
     resources.insert(HashSet::<PlayerInput>::new());

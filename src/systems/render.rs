@@ -35,13 +35,14 @@ pub fn render(
     let t_frame = Instant::now();
 
     let (w, h) = (window_size.0, window_size.1);
+    let (rw, rh) = ((w / 2).max(1), (h / 2).max(1));
 
     // Recreate buffers and texture if the window was resized.
-    if buffers.width != w || buffers.height != h {
-        *buffers = RenderBuffers::new(w, h, crate::VSID);
+    if buffers.width != rw || buffers.height != rh {
+        *buffers = RenderBuffers::new(rw, rh, crate::VSID);
         render_tex.0 = canvas_resources
             .texture_creator
-            .create_texture_streaming(PixelFormatEnum::ARGB8888, w, h)
+            .create_texture_streaming(PixelFormatEnum::ARGB8888, rw, rh)
             .expect("resize texture failed");
     }
 
@@ -63,7 +64,7 @@ pub fn render(
             .0
     };
 
-    let settings = OpticastSettings::for_oracle_framebuffer(w, h);
+    let settings = OpticastSettings::for_oracle_framebuffer(rw, rh);
 
     // --- Pass 1: ground world ---
     buffers.framebuffer.fill(sky);
@@ -73,7 +74,7 @@ pub fn render(
         let mut rasterizer = ScalarRasterizer::new(
             &mut buffers.framebuffer,
             &mut buffers.zbuffer,
-            w as usize,
+            rw as usize,
             grid,
         );
         let _ = opticast(&mut rasterizer, &mut buffers.pool, camera, &settings, grid);
@@ -110,7 +111,7 @@ pub fn render(
             let mut rasterizer = ScalarRasterizer::new(
                 &mut buffers.cube_fb,
                 &mut buffers.cube_zb,
-                w as usize,
+                rw as usize,
                 grid,
             );
             let _ = opticast(&mut rasterizer, &mut buffers.pool, &cube_cam, &settings, grid);
@@ -119,7 +120,7 @@ pub fn render(
         // Composite: cube geometry pixels over world.
         // Sky pixels in cube_fb equal `sky` (both pre-filled and written by rasterizer),
         // so checking != sky reliably identifies geometry hits.
-        let n = (w * h) as usize;
+        let n = (rw * rh) as usize;
         for i in 0..n {
             if buffers.cube_fb[i] != sky {
                 buffers.framebuffer[i] = buffers.cube_fb[i];
@@ -136,7 +137,7 @@ pub fn render(
         .update(
             None,
             bytemuck::cast_slice(&buffers.framebuffer),
-            (w * 4) as usize,
+            (rw * 4) as usize,
         )
         .expect("texture update failed");
     canvas_resources.canvas.clear();
