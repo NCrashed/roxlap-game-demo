@@ -30,6 +30,7 @@ use crate::systems::{
     newton_body::newton_body_system,
     performance_info::{update_info_system, PerformanceInfo},
     render::render_system,
+    thruster::thruster_system,
 };
 use crate::world::{build_cube_vxl, build_world, populate_world, Worlds, CUBE_VXL_VSID, VSID};
 
@@ -222,6 +223,7 @@ fn build_schedule() -> Schedule {
         .add_system(miner_input_system())
         .add_system(camera_update_system())
         .add_system(autopilot_system())
+        .add_system(thruster_system())
         .add_system(newton_body_system())
         .add_thread_local(render_system())
         .build()

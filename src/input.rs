@@ -4,7 +4,6 @@ use sdl2::keyboard::Scancode;
 pub enum PlayerInput {
     RollCW,
     RollCCW,
-    Damp,
 }
 
 impl PlayerInput {
@@ -12,7 +11,6 @@ impl PlayerInput {
         match scancode {
             Scancode::Q => Some(PlayerInput::RollCCW),
             Scancode::E => Some(PlayerInput::RollCW),
-            Scancode::Tab => Some(PlayerInput::Damp),
             _ => None,
         }
     }

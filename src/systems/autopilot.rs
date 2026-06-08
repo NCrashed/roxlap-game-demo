@@ -2,7 +2,9 @@ use glam::{DQuat, DVec3};
 use legion::{world::SubWorld, *};
 
 use crate::{
-    components::{camera::CameraComponent, miner::Miner, newton_body::NewtonBody},
+    components::{
+        camera::CameraComponent, miner::Miner, newton_body::NewtonBody, thruster::ThrusterBank,
+    },
     Dt, MouseDelta, ScreenState,
 };
 
@@ -15,9 +17,10 @@ const MAX_ANGULAR_SPEED: f64 = 3.0;
 /// Mouse sensitivity when rotating the target direction (rad/pixel).
 const MOUSE_SENSITIVITY: f64 = 0.003;
 
-/// Rotate the ship's `angular_vel` toward `target_dir`.
-/// Reads and writes `angular_vel` only — never touches `vel` or `pos`.
-pub fn apply_autopilot(body: &mut NewtonBody, target_dir: DVec3, dt: f64) {
+/// Compute the body-space angular-velocity delta needed to steer toward
+/// `target_dir` and accumulate it into `bank.command`.
+/// Does not write `body.angular_vel` — that is the thruster system's job.
+pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: DVec3, dt: f64) {
     let ship_fwd = body.orientation * DVec3::NEG_Z;
 
     let steer_cross = ship_fwd.cross(target_dir);
@@ -26,10 +29,9 @@ pub fn apply_autopilot(body: &mut NewtonBody, target_dir: DVec3, dt: f64) {
     let steer_angle = steer_sin.atan2(steer_cos);
 
     let smooth = (STEER_SMOOTH * dt * 60.0).min(1.0);
+
     if steer_angle.abs() > 0.001 {
-        // When ship_fwd ≈ -target_dir the cross product is ~0 but angle ≈ π;
-        // pick an arbitrary perpendicular axis rather than normalising a zero vector.
-        let steer_axis = if steer_sin > 1e-9 {
+        let steer_axis_world = if steer_sin > 1e-9 {
             steer_cross / steer_sin
         } else {
             let alt = if ship_fwd.x.abs() < 0.9 {
@@ -40,28 +42,28 @@ pub fn apply_autopilot(body: &mut NewtonBody, target_dir: DVec3, dt: f64) {
             ship_fwd.cross(alt).normalize()
         };
         let desired_speed = (steer_angle * STEER_GAIN).min(MAX_ANGULAR_SPEED);
-        let desired = steer_axis * desired_speed;
-        body.angular_vel += (desired - body.angular_vel) * smooth;
+        let desired_world = steer_axis_world * desired_speed;
+        let delta_world = (desired_world - body.angular_vel) * smooth;
+        bank.command += body.orientation.inverse() * delta_world;
     } else {
-        // Already aligned — damp residual spin.
-        body.angular_vel *= 1.0 - smooth;
+        // Damp residual spin toward zero.
+        let delta_world = -body.angular_vel * smooth;
+        bank.command += body.orientation.inverse() * delta_world;
     }
 }
 
 #[system]
 #[read_component(Miner)]
 #[read_component(CameraComponent)]
-#[write_component(NewtonBody)]
+#[read_component(NewtonBody)]
+#[write_component(ThrusterBank)]
 pub fn autopilot(
     world: &mut SubWorld,
     #[resource] screen: &mut ScreenState,
     #[resource] mouse_delta: &MouseDelta,
     #[resource] dt: &Dt,
 ) {
-    // Update world-space target direction from mouse input, using the current
-    // camera axes so the rotation feels screen-relative.
     if mouse_delta.x != 0.0 || mouse_delta.y != 0.0 {
-        // Read camera axes from the first miner entity.
         let cam_axes = {
             let mut q = <(&Miner, &CameraComponent)>::query();
             q.iter(world).next().map(|(_, cam)| {
@@ -79,17 +81,22 @@ pub fn autopilot(
     }
 
     let target_dir = screen.target_dir;
+    let dt_val = dt.0;
 
-    let mut q = <(&Miner, &mut NewtonBody)>::query();
-    for (_, body) in q.iter_mut(world) {
-        apply_autopilot(body, target_dir, dt.0);
+    let mut q = <(&Miner, &NewtonBody, &mut ThrusterBank)>::query();
+    for (_, body, bank) in q.iter_mut(world) {
+        apply_autopilot(body, bank, target_dir, dt_val);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::apply_autopilot;
-    use crate::{components::newton_body::NewtonBody, Dt};
+    use crate::{
+        components::{newton_body::NewtonBody, thruster::ThrusterBank},
+        systems::thruster::apply_thrusters,
+        Dt,
+    };
     use glam::{DQuat, DVec3};
     use proptest::prelude::*;
     use std::f64::consts::{FRAC_PI_2, PI};
@@ -103,12 +110,13 @@ mod tests {
         .normalize()
     }
 
-    /// Simulate autopilot + orientation integration; pos and vel are untouched.
     fn simulate(mut body: NewtonBody, target: DVec3, seconds: f64) -> NewtonBody {
         let dt = 1.0 / 60.0;
         let dt_obj = Dt(dt);
         for _ in 0..(seconds / dt) as usize {
-            apply_autopilot(&mut body, target, dt);
+            let mut bank = ThrusterBank::new(1.0, 0.75);
+            apply_autopilot(&body, &mut bank, target, dt);
+            apply_thrusters(&mut body, &mut bank);
             body.integrate_rotation(&dt_obj);
         }
         body
@@ -119,25 +127,28 @@ mod tests {
         heading.dot(target).clamp(-1.0, 1.0).acos()
     }
 
-    // ── apply_autopilot must not write pos or vel ───────────────────────────
+    // ── apply_autopilot must not write pos, vel, angular_vel, or orientation ─
 
     #[test]
-    fn does_not_write_pos_or_vel() {
+    fn does_not_write_body() {
         let pos = DVec3::new(42.0, -7.0, 100.0);
         let vel = DVec3::new(5.0, -3.0, 2.0);
-        let mut body = NewtonBody {
+        let ang = DVec3::new(0.1, 0.2, 0.3);
+        let body = NewtonBody {
             mass: 1.0,
             pos,
             vel,
             orientation: DQuat::IDENTITY,
-            angular_vel: DVec3::ZERO,
+            angular_vel: ang,
         };
-        apply_autopilot(&mut body, DVec3::X, 1.0 / 60.0);
-        assert_eq!(body.pos, pos, "apply_autopilot wrote pos");
-        assert_eq!(body.vel, vel, "apply_autopilot wrote vel");
+        let mut bank = ThrusterBank::new(1.0, 0.75);
+        apply_autopilot(&body, &mut bank, DVec3::X, 1.0 / 60.0);
+        assert_eq!(body.pos, pos);
+        assert_eq!(body.vel, vel);
+        assert_eq!(body.angular_vel, ang);
     }
 
-    // ── No NaN / inf under arbitrary single-step inputs ────────────────────
+    // ── No NaN / inf in command under arbitrary single-step inputs ──────────
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(300))]
@@ -151,17 +162,16 @@ mod tests {
             dt in 0.005f64..0.05,
         ) {
             let target = dir(tgt_yaw, tgt_pitch);
-            let mut body = NewtonBody {
+            let body = NewtonBody {
                 mass: 1.0,
                 pos: DVec3::ZERO,
                 vel: DVec3::ZERO,
                 orientation: DQuat::IDENTITY,
                 angular_vel: DVec3::new(ang_x, ang_y, ang_z),
             };
-            apply_autopilot(&mut body, target, dt);
-            prop_assert!(body.angular_vel.is_finite(), "angular_vel NaN/inf");
-            prop_assert_eq!(body.vel, DVec3::ZERO, "vel must not change");
-            prop_assert_eq!(body.pos, DVec3::ZERO, "pos must not change");
+            let mut bank = ThrusterBank::new(1.0, 0.75);
+            apply_autopilot(&body, &mut bank, target, dt);
+            prop_assert!(bank.command.is_finite(), "command NaN/inf");
         }
     }
 

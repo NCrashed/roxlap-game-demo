@@ -7,6 +7,7 @@ use roxlap_formats::{edit::MAXZDIM, vxl::Vxl};
 
 use crate::components::{
     camera::CameraComponent, cube_marker::CubeMarker, miner::Miner, newton_body::NewtonBody,
+    thruster::ThrusterBank,
 };
 
 pub const VSID: u32 = 64;
@@ -115,6 +116,9 @@ fn spawn_miner(world: &mut World) {
             right: right.to_array(),
             down: (-up).to_array(),
         }),
+        // 6 mount points at radius 1.0; accel_per_thruster sized so 4 aligned
+        // thrusters can achieve MAX_ANGULAR_SPEED (3.0 rad/s) per frame.
+        ThrusterBank::new(1.0, 0.75),
     ));
 }
 
