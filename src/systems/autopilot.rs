@@ -15,9 +15,9 @@ const MAX_ANGULAR_SPEED: f64 = 3.0;
 /// Mouse sensitivity when rotating the target direction (rad/pixel).
 const MOUSE_SENSITIVITY: f64 = 0.003;
 
-/// Accumulate a full-thrust body-space command into `bank.command` to steer
-/// toward `target_dir`.  The thruster system caps the impulse at the physical
-/// maximum (`4 × accel_per_thruster × dt`); no artificial smooth factor here.
+/// Steer toward `target_dir` using bang-bang control with a deceleration profile.
+/// The desired angular speed is capped at √(2·a·angle) — the fastest speed that
+/// still allows stopping at the target — so braking starts early enough to avoid overshoot.
 pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: DVec3) {
     let ship_fwd = body.orientation * DVec3::NEG_Z;
 
@@ -25,9 +25,7 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
     let steer_sin = steer_cross.length();
     let steer_cos = ship_fwd.dot(target_dir);
     let steer_angle = steer_sin.atan2(steer_cos);
-
-    let desired_speed = (steer_angle * STEER_GAIN).min(MAX_ANGULAR_SPEED);
-    if desired_speed < 1e-9 {
+    if steer_angle < 1e-9 {
         return;
     }
 
@@ -42,14 +40,18 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
         ship_fwd.cross(alt).normalize()
     };
 
+    let max_a = bank.max_accel(body.mass);
+    // Max speed that still allows stopping at the target under full deceleration.
+    let safe_speed = (2.0 * max_a * steer_angle).sqrt();
+    let desired_speed = safe_speed.min((steer_angle * STEER_GAIN).min(MAX_ANGULAR_SPEED));
+
     let desired_world = steer_axis * desired_speed;
     let error = desired_world - body.angular_vel;
-    let err_len = error.length();
-    if err_len < 1e-9 {
+    if error.length() < 1e-9 {
         return;
     }
 
-    bank.command += body.orientation.inverse() * (error / err_len * bank.max_accel(body.mass));
+    bank.command += body.orientation.inverse() * (error / error.length() * max_a);
 }
 
 #[system]
