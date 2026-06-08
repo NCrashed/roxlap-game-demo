@@ -14,8 +14,13 @@ const STEER_GAIN: f64 = 4.0;
 const MAX_ANGULAR_SPEED: f64 = 3.0;
 /// Mouse sensitivity when rotating the target direction (rad/pixel).
 const MOUSE_SENSITIVITY: f64 = 0.003;
-/// Below this heading error the autopilot stops steering and only damps residual spin.
+/// Below this heading error the autopilot switches to PD centering mode.
 const DEAD_ZONE: f64 = 0.01;
+/// Proportional gain inside dead zone: pulls heading toward target center (rad/s² per radian).
+const DEAD_ZONE_KP: f64 = 1.0;
+/// Derivative gain inside dead zone: damps residual spin (rad/s² per rad/s).
+/// Set to 2·√KP for critical damping.
+const DEAD_ZONE_KD: f64 = 2.0;
 
 /// Steer toward `target_dir` using bang-bang control with a deceleration profile.
 /// The desired angular speed is capped at √(2·a·angle) — the fastest speed that
@@ -34,15 +39,6 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
 
     let max_a = bank.max_accel(body.mass);
 
-    if steer_angle < DEAD_ZONE {
-        // Proportional damp: small drift → small correction → no sign-flip chatter.
-        // The throttle in apply_thrusters scales the command naturally.
-        if body.angular_vel.length() > 1e-9 {
-            bank.command += body.orientation.inverse() * (-body.angular_vel);
-        }
-        return;
-    }
-
     let steer_axis = if steer_sin > 1e-9 {
         steer_cross / steer_sin
     } else {
@@ -53,6 +49,15 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
         };
         ship_fwd.cross(alt).normalize()
     };
+
+    if steer_angle < DEAD_ZONE {
+        // PD controller: P pulls toward target center, D damps residual spin.
+        // Both terms write only to bank.command; apply_thrusters throttles naturally.
+        let p_world = steer_axis * (steer_angle * DEAD_ZONE_KP);
+        let d_world = -body.angular_vel * DEAD_ZONE_KD;
+        bank.command += body.orientation.inverse() * (p_world + d_world);
+        return;
+    }
 
     // Max speed that still allows stopping at the target under full deceleration.
     let safe_speed = (2.0 * max_a * steer_angle).sqrt();
