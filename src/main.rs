@@ -32,7 +32,9 @@ use crate::systems::{
     render::render_system,
     thruster::thruster_system,
 };
-use crate::world::{build_cube_vxl, build_world, populate_world, Worlds, CUBE_VXL_VSID, VSID};
+use crate::world::{
+    build_cube_vxl, build_world, miner_initial_forward, populate_world, Worlds, CUBE_VXL_VSID, VSID,
+};
 
 const INITIAL_WINDOW_WIDTH: u32 = 1280;
 const INITIAL_WINDOW_HEIGHT: u32 = 720;
@@ -196,7 +198,7 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
     resources.insert(ScreenState {
         w: INITIAL_WINDOW_WIDTH,
         h: INITIAL_WINDOW_HEIGHT,
-        target_dir: DVec3::NEG_Z, // ship starts facing -Z
+        target_dir: miner_initial_forward(),
     });
     resources.insert(MouseDelta { x: 0.0, y: 0.0 });
     resources.insert(RenderBuffers::new(

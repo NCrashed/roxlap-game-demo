@@ -84,15 +84,24 @@ pub fn populate_world(world: &mut World) {
     spawn_cube(world);
 }
 
-fn spawn_miner(world: &mut World) {
-    let pitch: f64 = 0.8;
-    let (sp, cp) = (pitch.sin(), pitch.cos());
-    let orientation = DQuat::from_mat3(&DMat3::from_cols(
+const MINER_PITCH: f64 = 0.8;
+
+fn miner_orientation() -> DQuat {
+    let (sp, cp) = (MINER_PITCH.sin(), MINER_PITCH.cos());
+    DQuat::from_mat3(&DMat3::from_cols(
         DVec3::Y,
         DVec3::new(-sp, 0.0, cp),
         DVec3::new(-cp, 0.0, -sp),
     ))
-    .normalize();
+    .normalize()
+}
+
+pub fn miner_initial_forward() -> DVec3 {
+    miner_orientation() * DVec3::NEG_Z
+}
+
+fn spawn_miner(world: &mut World) {
+    let orientation = miner_orientation();
     let pos = DVec3::new(
         f64::from(VSID) * 0.5 - 70.0,
         f64::from(VSID) * 0.5,
@@ -104,7 +113,6 @@ fn spawn_miner(world: &mut World) {
     world.push((
         Miner,
         NewtonBody {
-            mass: 1.0,
             pos,
             vel: DVec3::ZERO,
             orientation,
@@ -131,7 +139,6 @@ fn spawn_cube(world: &mut World) {
     world.push((
         CubeMarker,
         NewtonBody {
-            mass: 1.0,
             pos,
             vel: DVec3::ZERO,
             orientation: DQuat::IDENTITY,

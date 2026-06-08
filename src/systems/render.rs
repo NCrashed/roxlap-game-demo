@@ -7,8 +7,8 @@ use roxlap_core::{
     GridView, OpticastSettings,
 };
 use roxlap_formats::vxl::Vxl;
+use sdl2::gfx::primitives::DrawRenderer;
 use sdl2::pixels::{Color, PixelFormatEnum};
-use sdl2::rect::Point;
 
 use crate::{
     components::{camera::CameraComponent, cube_marker::CubeMarker, newton_body::NewtonBody},
@@ -192,41 +192,6 @@ fn cube_space_camera(
     }
 }
 
-fn draw_cross(
-    canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
-    x: i32,
-    y: i32,
-    size: i32,
-    gap: i32,
-    thickness: i32,
-) {
-    for t in 0..thickness {
-        let o = t - thickness / 2;
-        let _ = canvas.draw_line(Point::new(x - size, y + o), Point::new(x - gap, y + o));
-        let _ = canvas.draw_line(Point::new(x + gap, y + o), Point::new(x + size, y + o));
-        let _ = canvas.draw_line(Point::new(x + o, y - size), Point::new(x + o, y - gap));
-        let _ = canvas.draw_line(Point::new(x + o, y + gap), Point::new(x + o, y + size));
-    }
-}
-
-fn draw_diamond(
-    canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
-    x: i32,
-    y: i32,
-    r: i32,
-    thickness: i32,
-) {
-    for t in 0..thickness {
-        let rt = r - t;
-        if rt > 0 {
-            let _ = canvas.draw_line(Point::new(x, y - rt), Point::new(x + rt, y));
-            let _ = canvas.draw_line(Point::new(x + rt, y), Point::new(x, y + rt));
-            let _ = canvas.draw_line(Point::new(x, y + rt), Point::new(x - rt, y));
-            let _ = canvas.draw_line(Point::new(x - rt, y), Point::new(x, y - rt));
-        }
-    }
-}
-
 fn render_gui(
     canvas_resources: &mut CanvasResources,
     font_renderer: &FontRenderer,
@@ -254,11 +219,9 @@ fn render_gui(
     let cx = (window_w / 2) as i32;
     let cy = (window_h / 2) as i32;
 
-    canvas.set_draw_color(Color::MAGENTA);
-
     // Course indicator — ship nose, always at screen center (camera follows orientation).
-    draw_cross(canvas, cx, cy, 20, 6, 2);
+    let _ = canvas.circle(cx as i16, cy as i16, 20, Color::MAGENTA);
 
     // Target indicator — where the autopilot is steering toward.
-    draw_diamond(canvas, target.0, target.1, 16, 2);
+    let _ = canvas.circle(target.0 as i16, target.1 as i16, 5, Color::MAGENTA);
 }
