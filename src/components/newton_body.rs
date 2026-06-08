@@ -4,6 +4,7 @@ use crate::Dt;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NewtonBody {
+    pub mass: f64,
     pub pos: DVec3,
     pub vel: DVec3,
     pub orientation: DQuat,

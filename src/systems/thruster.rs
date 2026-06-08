@@ -14,13 +14,13 @@ pub fn apply_thrusters(body: &mut NewtonBody, bank: &mut ThrusterBank, dt: f64) 
         return;
     }
     let dir = bank.command / mag;
-    let throttle = (mag / bank.max_accel()).min(1.0);
+    let throttle = (mag / bank.max_accel(body.mass)).min(1.0);
+    let accel = bank.accel_per_thruster(body.mass);
 
     for &torque in &bank.torques {
         let activation = dir.dot(torque).max(0.0) * throttle;
         // torque is body-space; rotate to world-space before adding to angular_vel.
-        body.angular_vel +=
-            body.orientation * (torque * (activation * bank.accel_per_thruster * dt));
+        body.angular_vel += body.orientation * (torque * (activation * accel * dt));
     }
     bank.command = glam::DVec3::ZERO;
 }
@@ -43,6 +43,7 @@ mod tests {
 
     fn make_body() -> NewtonBody {
         NewtonBody {
+            mass: 1.0,
             pos: DVec3::ZERO,
             vel: DVec3::ZERO,
             orientation: DQuat::IDENTITY,
@@ -50,10 +51,16 @@ mod tests {
         }
     }
 
+    // 0.3 N × radius 1.0 / (I = 0.4 × 1.0 × 1.0²) = 0.75 rad/s² per thruster —
+    // same accel as the old accel_per_thruster = 0.75 constant.
+    fn make_bank() -> ThrusterBank {
+        ThrusterBank::new(1.0, 0.3)
+    }
+
     #[test]
     fn command_zeroed_after_apply() {
         let mut body = make_body();
-        let mut bank = ThrusterBank::new(1.0, 0.75);
+        let mut bank = make_bank();
         bank.command = DVec3::Z;
         apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
         assert_eq!(bank.command, DVec3::ZERO);
@@ -64,7 +71,7 @@ mod tests {
         let mut body = make_body();
         body.angular_vel = DVec3::new(1.0, 2.0, 3.0);
         let before = body.angular_vel;
-        let mut bank = ThrusterBank::new(1.0, 0.75);
+        let mut bank = make_bank();
         apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
         assert_eq!(body.angular_vel, before);
     }
@@ -81,7 +88,7 @@ mod tests {
             DVec3::NEG_Z,
         ] {
             let mut body = make_body();
-            let mut bank = ThrusterBank::new(1.0, 0.75);
+            let mut bank = make_bank();
             bank.command = dir * 3.0;
             apply_thrusters(&mut body, &mut bank, 1.0);
             let dot = body.angular_vel.dot(dir);
@@ -95,7 +102,7 @@ mod tests {
     #[test]
     fn no_nan_or_inf() {
         let mut body = make_body();
-        let mut bank = ThrusterBank::new(1.0, 0.75);
+        let mut bank = make_bank();
         bank.command = DVec3::new(0.3, -0.1, 0.7);
         apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
         assert!(body.angular_vel.is_finite());
@@ -106,7 +113,7 @@ mod tests {
         let mut body = make_body();
         body.pos = DVec3::new(1.0, 2.0, 3.0);
         body.vel = DVec3::new(4.0, 5.0, 6.0);
-        let mut bank = ThrusterBank::new(1.0, 0.75);
+        let mut bank = make_bank();
         bank.command = DVec3::X;
         apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
         assert_eq!(body.pos, DVec3::new(1.0, 2.0, 3.0));

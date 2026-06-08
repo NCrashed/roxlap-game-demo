@@ -113,6 +113,7 @@ fn spawn_miner(world: &mut World) {
     world.push((
         Miner,
         NewtonBody {
+            mass: 1.0,
             pos,
             vel: DVec3::ZERO,
             orientation,
@@ -124,9 +125,8 @@ fn spawn_miner(world: &mut World) {
             right: right.to_array(),
             down: (-up).to_array(),
         }),
-        // 6 mount points at radius 1.0; accel_per_thruster sized so 4 aligned
-        // thrusters can achieve MAX_ANGULAR_SPEED (3.0 rad/s) per frame.
-        ThrusterBank::new(1.0, 0.75),
+        // radius=1.0 m, force=0.3 N → accel_per_thruster = 5·F/(2·m·r) = 0.75 rad/s²
+        ThrusterBank::new(1.0, 0.3),
     ));
 }
 
@@ -139,6 +139,7 @@ fn spawn_cube(world: &mut World) {
     world.push((
         CubeMarker,
         NewtonBody {
+            mass: 1.0,
             pos,
             vel: DVec3::ZERO,
             orientation: DQuat::IDENTITY,

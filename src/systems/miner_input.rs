@@ -4,27 +4,28 @@ use glam::DVec3;
 use legion::{world::SubWorld, *};
 
 use crate::{
-    components::{miner::Miner, thruster::ThrusterBank},
+    components::{miner::Miner, newton_body::NewtonBody, thruster::ThrusterBank},
     input::PlayerInput,
 };
 
-pub fn apply_miner_input(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank) {
+pub fn apply_miner_input(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank, mass: f64) {
     let cw = inputs.contains(&PlayerInput::RollCW);
     let ccw = inputs.contains(&PlayerInput::RollCCW);
     if cw == ccw {
         return;
     }
     let sign = if cw { 1.0_f64 } else { -1.0 };
-    bank.command += DVec3::NEG_Z * (bank.max_accel() * sign);
+    bank.command += DVec3::NEG_Z * (bank.max_accel(mass) * sign);
 }
 
 #[system]
 #[read_component(Miner)]
+#[read_component(NewtonBody)]
 #[write_component(ThrusterBank)]
 pub fn miner_input(world: &mut SubWorld, #[resource] inputs: &HashSet<PlayerInput>) {
-    let mut query = <(&Miner, &mut ThrusterBank)>::query();
-    for (_, bank) in query.iter_mut(world) {
-        apply_miner_input(inputs, bank);
+    let mut query = <(&Miner, &NewtonBody, &mut ThrusterBank)>::query();
+    for (_, body, bank) in query.iter_mut(world) {
+        apply_miner_input(inputs, bank, body.mass);
     }
 }
 
@@ -35,7 +36,7 @@ mod tests {
     use proptest::prelude::*;
 
     fn make_bank() -> ThrusterBank {
-        ThrusterBank::new(1.0, 0.75)
+        ThrusterBank::new(1.0, 0.3)
     }
 
     fn arb_player_input() -> impl Strategy<Value = PlayerInput> {
@@ -50,7 +51,7 @@ mod tests {
     #[test]
     fn no_input_bank_unchanged() {
         let mut bank = make_bank();
-        apply_miner_input(&HashSet::new(), &mut bank);
+        apply_miner_input(&HashSet::new(), &mut bank, 1.0);
         assert_eq!(bank.command, DVec3::ZERO);
     }
 
@@ -61,7 +62,7 @@ mod tests {
         both.insert(PlayerInput::RollCW);
         both.insert(PlayerInput::RollCCW);
         let mut bank = make_bank();
-        apply_miner_input(&both, &mut bank);
+        apply_miner_input(&both, &mut bank, 1.0);
         assert_eq!(bank.command, DVec3::ZERO);
     }
 
@@ -70,7 +71,7 @@ mod tests {
         #[test]
         fn no_nan_or_inf(inputs in arb_inputs()) {
             let mut bank = make_bank();
-            apply_miner_input(&inputs, &mut bank);
+            apply_miner_input(&inputs, &mut bank, 1.0);
             prop_assert!(bank.command.is_finite());
         }
     }
@@ -80,7 +81,7 @@ mod tests {
     fn roll_command_along_neg_z() {
         let mut bank = make_bank();
         let inputs: HashSet<PlayerInput> = [PlayerInput::RollCW].into_iter().collect();
-        apply_miner_input(&inputs, &mut bank);
+        apply_miner_input(&inputs, &mut bank, 1.0);
         let perp = bank.command - DVec3::NEG_Z * bank.command.dot(DVec3::NEG_Z);
         assert!(
             perp.length() < 1e-12,

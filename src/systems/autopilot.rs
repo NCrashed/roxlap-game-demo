@@ -49,7 +49,7 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
         return;
     }
 
-    bank.command += body.orientation.inverse() * (error / err_len * bank.max_accel());
+    bank.command += body.orientation.inverse() * (error / err_len * bank.max_accel(body.mass));
 }
 
 #[system]
@@ -112,7 +112,7 @@ mod tests {
         let dt = 1.0 / 60.0;
         let dt_obj = Dt(dt);
         for _ in 0..(seconds / dt) as usize {
-            let mut bank = ThrusterBank::new(1.0, 0.75);
+            let mut bank = ThrusterBank::new(1.0, 0.3);
             apply_autopilot(&body, &mut bank, target);
             apply_thrusters(&mut body, &mut bank, dt);
             body.integrate_rotation(&dt_obj);
@@ -133,12 +133,13 @@ mod tests {
         let vel = DVec3::new(5.0, -3.0, 2.0);
         let ang = DVec3::new(0.1, 0.2, 0.3);
         let body = NewtonBody {
+            mass: 1.0,
             pos,
             vel,
             orientation: DQuat::IDENTITY,
             angular_vel: ang,
         };
-        let mut bank = ThrusterBank::new(1.0, 0.75);
+        let mut bank = ThrusterBank::new(1.0, 0.3);
         apply_autopilot(&body, &mut bank, DVec3::X);
         assert_eq!(body.pos, pos);
         assert_eq!(body.vel, vel);
@@ -159,12 +160,13 @@ mod tests {
         ) {
             let target = dir(tgt_yaw, tgt_pitch);
             let body = NewtonBody {
+                mass: 1.0,
                 pos: DVec3::ZERO,
                 vel: DVec3::ZERO,
                 orientation: DQuat::IDENTITY,
                 angular_vel: DVec3::new(ang_x, ang_y, ang_z),
             };
-            let mut bank = ThrusterBank::new(1.0, 0.75);
+            let mut bank = ThrusterBank::new(1.0, 0.3);
             apply_autopilot(&body, &mut bank, target);
             prop_assert!(bank.command.is_finite(), "command NaN/inf");
         }
@@ -181,6 +183,7 @@ mod tests {
         ) {
             let target = dir(tgt_yaw, tgt_pitch);
             let body = NewtonBody {
+                mass: 1.0,
                 pos: DVec3::ZERO,
                 vel: DVec3::ZERO,
                 orientation: DQuat::IDENTITY,

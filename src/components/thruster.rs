@@ -9,12 +9,14 @@ pub struct ThrusterBank {
     /// Accumulated body-space angular-acceleration request for this frame.
     /// Written by input / autopilot systems; consumed and zeroed by the thruster system.
     pub command: DVec3,
-    /// Max angular-velocity change a single fully-activated thruster contributes per step.
-    pub accel_per_thruster: f64,
+    /// Thrust force each nozzle produces (N).
+    pub force_per_thruster: f64,
+    /// Arm length from body centre to each mount point (m).
+    pub radius: f64,
 }
 
 impl ThrusterBank {
-    pub fn new(radius: f64, accel_per_thruster: f64) -> Self {
+    pub fn new(radius: f64, force_per_thruster: f64) -> Self {
         let groups: [(DVec3, [DVec3; 4]); 6] = [
             (DVec3::X, [DVec3::Y, DVec3::NEG_Y, DVec3::Z, DVec3::NEG_Z]),
             (
@@ -42,13 +44,22 @@ impl ThrusterBank {
         Self {
             torques,
             command: DVec3::ZERO,
-            accel_per_thruster,
+            force_per_thruster,
+            radius,
         }
     }
 
-    /// Maximum angular acceleration achievable when four aligned thrusters fire together.
+    /// Angular acceleration one fully-activated thruster produces (rad/s²).
+    /// Uses solid-sphere inertia: I = (2/5) · mass · radius².
     #[inline]
-    pub fn max_accel(&self) -> f64 {
-        self.accel_per_thruster * 4.0
+    pub fn accel_per_thruster(&self, mass: f64) -> f64 {
+        let inertia = (2.0 / 5.0) * mass * self.radius * self.radius;
+        self.force_per_thruster * self.radius / inertia
+    }
+
+    /// Maximum angular acceleration when four aligned thrusters fire together (rad/s²).
+    #[inline]
+    pub fn max_accel(&self, mass: f64) -> f64 {
+        self.accel_per_thruster(mass) * 4.0
     }
 }
