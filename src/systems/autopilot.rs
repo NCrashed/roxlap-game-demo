@@ -50,11 +50,14 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
         ship_fwd.cross(alt).normalize()
     };
 
+    // Strip roll (rotation around ship_fwd / body NEG_Z) from angular_vel so Q/E roll
+    // doesn't interfere with autopilot steering. Roll doesn't change heading anyway.
+    let heading_av = body.angular_vel - ship_fwd * body.angular_vel.dot(ship_fwd);
+
     if steer_angle < DEAD_ZONE {
-        // PD controller: P pulls toward target center, D damps residual spin.
-        // Both terms write only to bank.command; apply_thrusters throttles naturally.
+        // PD controller: P pulls toward target center, D damps heading spin only.
         let p_world = steer_axis * (steer_angle * DEAD_ZONE_KP);
-        let d_world = -body.angular_vel * DEAD_ZONE_KD;
+        let d_world = -heading_av * DEAD_ZONE_KD;
         bank.command += body.orientation.inverse() * (p_world + d_world);
         return;
     }
@@ -64,11 +67,10 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
     let desired_speed = safe_speed.min((steer_angle * STEER_GAIN).min(MAX_ANGULAR_SPEED));
 
     let desired_world = steer_axis * desired_speed;
-    let error = desired_world - body.angular_vel;
+    let error = desired_world - heading_av;
     if error.length() < 1e-9 {
         return;
     }
-
     bank.command += body.orientation.inverse() * (error / error.length() * max_a);
 }
 
