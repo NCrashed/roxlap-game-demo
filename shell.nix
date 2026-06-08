@@ -12,9 +12,10 @@ pkgs.mkShell {
     SDL2_mixer
     SDL2_gfx
     SDL2_ttf
+    open-sans
   ];
 
   shellHook = ''
-
+    ln -sf ${pkgs.open-sans}/share/fonts/truetype ./
   '';
 }
