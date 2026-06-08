@@ -1,3 +1,4 @@
+use glam::DVec3;
 use legion::{world::SubWorld, *};
 
 use crate::{
@@ -5,24 +6,33 @@ use crate::{
     Dt,
 };
 
-/// Project `bank.command` (body-space thrust direction) onto each torque axis
-/// and apply a frame-rate-independent angular_vel change.
 pub fn apply_thrusters(body: &mut NewtonBody, bank: &mut ThrusterBank, dt: f64) {
+    // --- Rotational ---
     let mag = bank.command.length();
-    if mag < 1e-15 {
-        bank.command = glam::DVec3::ZERO;
-        return;
+    if mag >= 1e-15 {
+        let dir = bank.command / mag;
+        let throttle = (mag / bank.max_accel(body.mass)).min(1.0);
+        let accel = bank.accel_per_thruster(body.mass);
+        for &torque in &bank.torques {
+            let activation = dir.dot(torque).max(0.0) * throttle;
+            body.angular_vel += body.orientation * (torque * (activation * accel * dt));
+        }
     }
-    let dir = bank.command / mag;
-    let throttle = (mag / bank.max_accel(body.mass)).min(1.0);
-    let accel = bank.accel_per_thruster(body.mass);
+    bank.command = DVec3::ZERO;
 
-    for &torque in &bank.torques {
-        let activation = dir.dot(torque).max(0.0) * throttle;
-        // torque is body-space; rotate to world-space before adding to angular_vel.
-        body.angular_vel += body.orientation * (torque * (activation * accel * dt));
+    // --- Linear ---
+    let lin_mag = bank.linear_command.length();
+    if lin_mag >= 1e-15 {
+        let lin_dir = bank.linear_command / lin_mag;
+        let max_la = bank.max_linear_accel(body.mass);
+        let throttle = (lin_mag / max_la).min(1.0);
+        let la = bank.linear_force / body.mass;
+        for &axis in &bank.linear_axes {
+            let activation = lin_dir.dot(axis).max(0.0) * throttle;
+            body.vel += body.orientation * (axis * (activation * la * dt));
+        }
     }
-    bank.command = glam::DVec3::ZERO;
+    bank.linear_command = DVec3::ZERO;
 }
 
 #[system]
@@ -51,11 +61,14 @@ mod tests {
         }
     }
 
-    // 0.3 N × radius 1.0 / (I = 0.4 × 1.0 × 1.0²) = 0.75 rad/s² per thruster —
-    // same accel as the old accel_per_thruster = 0.75 constant.
+    // radius=1.0, rot_force=0.6 N → accel_per = 0.6×1/(0.4×1×1) = 1.5 rad/s²
+    // max_accel = 1.5 × 2 = 3.0 rad/s²  (same as old 0.3 N × 4 nozzles)
+    // lin_force=5.0 N → max_linear_accel = 5.0 m/s²
     fn make_bank() -> ThrusterBank {
-        ThrusterBank::new(1.0, 0.3)
+        ThrusterBank::new(1.0, 0.6, 5.0)
     }
+
+    // ── Rotational ──────────────────────────────────────────────────────────
 
     #[test]
     fn command_zeroed_after_apply() {
@@ -78,7 +91,6 @@ mod tests {
 
     #[test]
     fn angular_vel_moves_in_commanded_direction() {
-        // Use dt=1.0 so the angular_vel change is large enough to check direction reliably.
         for &dir in &[
             DVec3::X,
             DVec3::Y,
@@ -100,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn no_nan_or_inf() {
+    fn rot_no_nan_or_inf() {
         let mut body = make_body();
         let mut bank = make_bank();
         bank.command = DVec3::new(0.3, -0.1, 0.7);
@@ -109,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn pos_vel_unchanged() {
+    fn rot_does_not_touch_pos_vel() {
         let mut body = make_body();
         body.pos = DVec3::new(1.0, 2.0, 3.0);
         body.vel = DVec3::new(4.0, 5.0, 6.0);
@@ -118,5 +130,65 @@ mod tests {
         apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
         assert_eq!(body.pos, DVec3::new(1.0, 2.0, 3.0));
         assert_eq!(body.vel, DVec3::new(4.0, 5.0, 6.0));
+    }
+
+    // ── Linear ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn linear_command_zeroed_after_apply() {
+        let mut body = make_body();
+        let mut bank = make_bank();
+        bank.linear_command = DVec3::Y;
+        apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
+        assert_eq!(bank.linear_command, DVec3::ZERO);
+    }
+
+    #[test]
+    fn linear_vel_moves_in_commanded_direction() {
+        for &dir in &[
+            DVec3::X,
+            DVec3::Y,
+            DVec3::Z,
+            DVec3::NEG_X,
+            DVec3::NEG_Y,
+            DVec3::NEG_Z,
+        ] {
+            let mut body = make_body();
+            let mut bank = make_bank();
+            bank.linear_command = dir * bank.max_linear_accel(body.mass);
+            apply_thrusters(&mut body, &mut bank, 1.0);
+            let dot = body.vel.dot(dir);
+            assert!(
+                dot > 0.5,
+                "vel not in commanded direction {dir:?}: dot={dot}"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_thrust_respects_orientation() {
+        use std::f64::consts::FRAC_PI_2;
+        // rotation_x(π/2): body +Y → world +Z
+        let mut body = make_body();
+        body.orientation = DQuat::from_rotation_x(FRAC_PI_2);
+        let mut bank = make_bank();
+        bank.linear_command = DVec3::Y * bank.max_linear_accel(body.mass);
+        apply_thrusters(&mut body, &mut bank, 1.0);
+        assert!(
+            body.vel.z > 0.0,
+            "body +Y should map to world +Z after rotation_x(π/2)"
+        );
+        assert!(body.vel.x.abs() < 1e-12);
+    }
+
+    #[test]
+    fn linear_does_not_touch_angular_vel() {
+        let mut body = make_body();
+        body.angular_vel = DVec3::new(1.0, 2.0, 3.0);
+        let before = body.angular_vel;
+        let mut bank = make_bank();
+        bank.linear_command = DVec3::X;
+        apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
+        assert_eq!(body.angular_vel, before);
     }
 }

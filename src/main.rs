@@ -1,6 +1,7 @@
 mod components;
 mod fonts;
 mod input;
+mod math;
 mod systems;
 mod world;
 

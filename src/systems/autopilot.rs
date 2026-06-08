@@ -5,6 +5,7 @@ use crate::{
     components::{
         camera::CameraComponent, miner::Miner, newton_body::NewtonBody, thruster::ThrusterBank,
     },
+    math::reject,
     MouseDelta, ScreenState,
 };
 
@@ -52,7 +53,7 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
 
     // Strip roll (rotation around ship_fwd / body NEG_Z) from angular_vel so Q/E roll
     // doesn't interfere with autopilot steering. Roll doesn't change heading anyway.
-    let heading_av = body.angular_vel - ship_fwd * body.angular_vel.dot(ship_fwd);
+    let heading_av = reject(body.angular_vel, ship_fwd);
 
     if steer_angle < DEAD_ZONE {
         // PD controller: P pulls toward target center, D damps heading spin only.
@@ -134,7 +135,7 @@ mod tests {
         let dt = 1.0 / 60.0;
         let dt_obj = Dt(dt);
         for _ in 0..(seconds / dt) as usize {
-            let mut bank = ThrusterBank::new(1.0, 0.3);
+            let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
             apply_autopilot(&body, &mut bank, target);
             apply_thrusters(&mut body, &mut bank, dt);
             body.integrate_rotation(&dt_obj);
@@ -161,7 +162,7 @@ mod tests {
             orientation: DQuat::IDENTITY,
             angular_vel: ang,
         };
-        let mut bank = ThrusterBank::new(1.0, 0.3);
+        let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
         apply_autopilot(&body, &mut bank, DVec3::X);
         assert_eq!(body.pos, pos);
         assert_eq!(body.vel, vel);
@@ -188,7 +189,7 @@ mod tests {
                 orientation: DQuat::IDENTITY,
                 angular_vel: DVec3::new(ang_x, ang_y, ang_z),
             };
-            let mut bank = ThrusterBank::new(1.0, 0.3);
+            let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
             apply_autopilot(&body, &mut bank, target);
             prop_assert!(bank.command.is_finite(), "command NaN/inf");
         }
@@ -212,7 +213,7 @@ mod tests {
         let dt = 1.0 / 60.0;
         let dt_obj = Dt(dt);
         for _ in 0..60 {
-            let mut bank = ThrusterBank::new(1.0, 0.3);
+            let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
             bank.command += DVec3::NEG_Z * bank.max_accel(body.mass);
             apply_autopilot(&body, &mut bank, target);
             apply_thrusters(&mut body, &mut bank, dt);
@@ -240,7 +241,7 @@ mod tests {
         let dt = 1.0 / 60.0;
         let dt_obj = Dt(dt);
         for _ in 0..(8.0 / dt) as usize {
-            let mut bank = ThrusterBank::new(1.0, 0.3);
+            let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
             bank.command += DVec3::NEG_Z * bank.max_accel(body.mass);
             apply_autopilot(&body, &mut bank, target);
             apply_thrusters(&mut body, &mut bank, dt);

@@ -1,65 +1,91 @@
 use glam::DVec3;
 
-/// Six sphere-surface mount points (±X, ±Y, ±Z body axes), each with four
-/// tangential nozzles.  Any subset producing a pure couple (zero net force)
-/// can be selected by projecting the command onto each nozzle's torque axis.
+/// 12 rotational nozzles (4 per body axis, pure couple — zero net force) plus
+/// 6 linear nozzles (±X, ±Y, ±Z, pure force — zero net torque).
 pub struct ThrusterBank {
-    /// Precomputed body-space unit torque axis for each nozzle.
+    /// Body-space unit torque axes for the 12 rotational nozzles.
     pub torques: Vec<DVec3>,
+    /// Body-space unit axes for the 6 linear nozzles (±X, ±Y, ±Z).
+    pub linear_axes: Vec<DVec3>,
     /// Accumulated body-space angular-acceleration request for this frame.
-    /// Written by input / autopilot systems; consumed and zeroed by the thruster system.
     pub command: DVec3,
-    /// Thrust force each nozzle produces (N).
+    /// Accumulated body-space linear-acceleration request for this frame.
+    pub linear_command: DVec3,
+    /// Thrust force per rotational nozzle (N).
     pub force_per_thruster: f64,
+    /// Thrust force per linear nozzle (N).
+    pub linear_force: f64,
     /// Arm length from body centre to each mount point (m).
     pub radius: f64,
 }
 
 impl ThrusterBank {
-    pub fn new(radius: f64, force_per_thruster: f64) -> Self {
-        let groups: [(DVec3, [DVec3; 4]); 6] = [
-            (DVec3::X, [DVec3::Y, DVec3::NEG_Y, DVec3::Z, DVec3::NEG_Z]),
-            (
-                DVec3::NEG_X,
-                [DVec3::Y, DVec3::NEG_Y, DVec3::Z, DVec3::NEG_Z],
-            ),
-            (DVec3::Y, [DVec3::X, DVec3::NEG_X, DVec3::Z, DVec3::NEG_Z]),
-            (
-                DVec3::NEG_Y,
-                [DVec3::X, DVec3::NEG_X, DVec3::Z, DVec3::NEG_Z],
-            ),
-            (DVec3::Z, [DVec3::X, DVec3::NEG_X, DVec3::Y, DVec3::NEG_Y]),
-            (
-                DVec3::NEG_Z,
-                [DVec3::X, DVec3::NEG_X, DVec3::Y, DVec3::NEG_Y],
-            ),
+    /// Build the bank.
+    ///
+    /// Rotational nozzles: 4 per body axis, each pair a balanced couple
+    /// (computed as `(mount × radius).cross(fire_dir).normalize()`).
+    /// Linear nozzles: one per face, firing radially outward.
+    pub fn new(radius: f64, force_per_thruster: f64, linear_force: f64) -> Self {
+        // (mount_axis, fire_dir) pairs — each produces a unit torque along one body axis.
+        let rot_nozzles: [(DVec3, DVec3); 12] = [
+            // Z rotation — mount ±X, fire ±Y
+            (DVec3::X, DVec3::Y),
+            (DVec3::NEG_X, DVec3::NEG_Y),
+            (DVec3::X, DVec3::NEG_Y),
+            (DVec3::NEG_X, DVec3::Y),
+            // Y rotation — mount ±Z, fire ±X
+            (DVec3::Z, DVec3::X),
+            (DVec3::NEG_Z, DVec3::NEG_X),
+            (DVec3::Z, DVec3::NEG_X),
+            (DVec3::NEG_Z, DVec3::X),
+            // X rotation — mount ±Y, fire ±Z
+            (DVec3::Y, DVec3::Z),
+            (DVec3::NEG_Y, DVec3::NEG_Z),
+            (DVec3::Y, DVec3::NEG_Z),
+            (DVec3::NEG_Y, DVec3::Z),
         ];
-        let mut torques = Vec::with_capacity(24);
-        for (axis, tans) in &groups {
-            let offset = *axis * radius;
-            for &dir in tans {
-                torques.push(offset.cross(dir).normalize());
-            }
+
+        let mut torques = Vec::with_capacity(12);
+        for (mount, fire) in &rot_nozzles {
+            torques.push((*mount * radius).cross(*fire).normalize());
         }
+
+        let linear_axes = vec![
+            DVec3::X,
+            DVec3::NEG_X,
+            DVec3::Y,
+            DVec3::NEG_Y,
+            DVec3::Z,
+            DVec3::NEG_Z,
+        ];
+
         Self {
             torques,
+            linear_axes,
             command: DVec3::ZERO,
+            linear_command: DVec3::ZERO,
             force_per_thruster,
+            linear_force,
             radius,
         }
     }
 
-    /// Angular acceleration one fully-activated thruster produces (rad/s²).
-    /// Uses solid-sphere inertia: I = (2/5) · mass · radius².
+    /// Angular acceleration one rotational thruster produces (rad/s²).
     #[inline]
     pub fn accel_per_thruster(&self, mass: f64) -> f64 {
         let inertia = (2.0 / 5.0) * mass * self.radius * self.radius;
         self.force_per_thruster * self.radius / inertia
     }
 
-    /// Maximum angular acceleration when four aligned thrusters fire together (rad/s²).
+    /// Maximum angular acceleration: 2 aligned nozzles fire per direction.
     #[inline]
     pub fn max_accel(&self, mass: f64) -> f64 {
-        self.accel_per_thruster(mass) * 4.0
+        self.accel_per_thruster(mass) * 2.0
+    }
+
+    /// Maximum linear acceleration: 1 nozzle fires per direction.
+    #[inline]
+    pub fn max_linear_accel(&self, mass: f64) -> f64 {
+        self.linear_force / mass
     }
 }

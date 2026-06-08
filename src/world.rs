@@ -125,8 +125,9 @@ fn spawn_miner(world: &mut World) {
             right: right.to_array(),
             down: (-up).to_array(),
         }),
-        // radius=1.0 m, force=0.3 N → accel_per_thruster = 5·F/(2·m·r) = 0.75 rad/s²
-        ThrusterBank::new(1.0, 0.3),
+        // rot: radius=1.0 m, 0.6 N × 2 nozzles → 3.0 rad/s² max
+        // lin: 5.0 N → 5.0 m/s² max linear acceleration
+        ThrusterBank::new(1.0, 0.6, 5.0),
     ));
 }
 

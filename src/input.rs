@@ -8,6 +8,7 @@ pub enum PlayerInput {
     ThrustDown,
     ThrustLeft,
     ThrustRight,
+    Damping,
 }
 
 impl PlayerInput {
@@ -19,6 +20,7 @@ impl PlayerInput {
             Scancode::S => Some(PlayerInput::ThrustDown),
             Scancode::A => Some(PlayerInput::ThrustLeft),
             Scancode::D => Some(PlayerInput::ThrustRight),
+            Scancode::Tab => Some(PlayerInput::Damping),
             _ => None,
         }
     }
