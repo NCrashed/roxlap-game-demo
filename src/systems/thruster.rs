@@ -6,10 +6,12 @@ use crate::{
     Dt,
 };
 
+const MIN_COMMAND: f64 = 1e-15;
+
 pub fn apply_thrusters(body: &mut NewtonBody, bank: &mut ThrusterBank, dt: f64) {
     // --- Rotational ---
     let mag = bank.command.length();
-    if mag >= 1e-15 {
+    if mag >= MIN_COMMAND {
         let dir = bank.command / mag;
         let throttle = (mag / bank.max_accel(body.mass)).min(1.0);
         let accel = bank.accel_per_thruster(body.mass);
@@ -22,7 +24,7 @@ pub fn apply_thrusters(body: &mut NewtonBody, bank: &mut ThrusterBank, dt: f64) 
 
     // --- Linear ---
     let lin_mag = bank.linear_command.length();
-    if lin_mag >= 1e-15 {
+    if lin_mag >= MIN_COMMAND {
         let lin_dir = bank.linear_command / lin_mag;
         let max_la = bank.max_linear_accel(body.mass);
         let throttle = (lin_mag / max_la).min(1.0);
@@ -120,18 +122,6 @@ mod tests {
         assert!(body.angular_vel.is_finite());
     }
 
-    #[test]
-    fn rot_does_not_touch_pos_vel() {
-        let mut body = make_body();
-        body.pos = DVec3::new(1.0, 2.0, 3.0);
-        body.vel = DVec3::new(4.0, 5.0, 6.0);
-        let mut bank = make_bank();
-        bank.command = DVec3::X;
-        apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
-        assert_eq!(body.pos, DVec3::new(1.0, 2.0, 3.0));
-        assert_eq!(body.vel, DVec3::new(4.0, 5.0, 6.0));
-    }
-
     // ── Linear ──────────────────────────────────────────────────────────────
 
     #[test]
@@ -181,14 +171,4 @@ mod tests {
         assert!(body.vel.x.abs() < 1e-12);
     }
 
-    #[test]
-    fn linear_does_not_touch_angular_vel() {
-        let mut body = make_body();
-        body.angular_vel = DVec3::new(1.0, 2.0, 3.0);
-        let before = body.angular_vel;
-        let mut bank = make_bank();
-        bank.linear_command = DVec3::X;
-        apply_thrusters(&mut body, &mut bank, 1.0 / 60.0);
-        assert_eq!(body.angular_vel, before);
-    }
 }

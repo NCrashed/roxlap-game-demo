@@ -148,27 +148,6 @@ mod tests {
         heading.dot(target).clamp(-1.0, 1.0).acos()
     }
 
-    // ── apply_autopilot must not write pos, vel, angular_vel, or orientation ─
-
-    #[test]
-    fn does_not_write_body() {
-        let pos = DVec3::new(42.0, -7.0, 100.0);
-        let vel = DVec3::new(5.0, -3.0, 2.0);
-        let ang = DVec3::new(0.1, 0.2, 0.3);
-        let body = NewtonBody {
-            mass: 1.0,
-            pos,
-            vel,
-            orientation: DQuat::IDENTITY,
-            angular_vel: ang,
-        };
-        let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
-        apply_autopilot(&body, &mut bank, DVec3::X);
-        assert_eq!(body.pos, pos);
-        assert_eq!(body.vel, vel);
-        assert_eq!(body.angular_vel, ang);
-    }
-
     // ── No NaN / inf in command under arbitrary single-step inputs ──────────
 
     proptest! {

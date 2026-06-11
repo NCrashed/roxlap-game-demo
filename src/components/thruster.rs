@@ -4,9 +4,9 @@ use glam::DVec3;
 /// 6 linear nozzles (±X, ±Y, ±Z, pure force — zero net torque).
 pub struct ThrusterBank {
     /// Body-space unit torque axes for the 12 rotational nozzles.
-    pub torques: Vec<DVec3>,
+    pub torques: [DVec3; 12],
     /// Body-space unit axes for the 6 linear nozzles (±X, ±Y, ±Z).
-    pub linear_axes: Vec<DVec3>,
+    pub linear_axes: [DVec3; 6],
     /// Accumulated body-space angular-acceleration request for this frame.
     pub command: DVec3,
     /// Accumulated body-space linear-acceleration request for this frame.
@@ -45,12 +45,9 @@ impl ThrusterBank {
             (DVec3::NEG_Y, DVec3::Z),
         ];
 
-        let mut torques = Vec::with_capacity(12);
-        for (mount, fire) in &rot_nozzles {
-            torques.push((*mount * radius).cross(*fire).normalize());
-        }
+        let torques = rot_nozzles.map(|(mount, fire)| (mount * radius).cross(fire).normalize());
 
-        let linear_axes = vec![
+        let linear_axes = [
             DVec3::X,
             DVec3::NEG_X,
             DVec3::Y,
@@ -73,7 +70,7 @@ impl ThrusterBank {
     /// Angular acceleration one rotational thruster produces (rad/s²).
     #[inline]
     pub fn accel_per_thruster(&self, mass: f64) -> f64 {
-        let inertia = (2.0 / 5.0) * mass * self.radius * self.radius;
+        let inertia = (2.0 / 5.0) * mass * self.radius * self.radius; // solid-sphere moment of inertia: I = 2/5 · m · r²
         self.force_per_thruster * self.radius / inertia
     }
 

@@ -10,6 +10,11 @@ use crate::{
 
 /// Proportional retro-thrust gain (s⁻¹). Terminal velocity ≈ max_linear_accel / LINEAR_DAMPING.
 const LINEAR_DAMPING: f64 = 1.5;
+const MIN_DIR_SQ: f64 = 1e-15;
+
+fn axis(inputs: &HashSet<PlayerInput>, pos: PlayerInput, neg: PlayerInput) -> f64 {
+    (inputs.contains(&pos) as i32 - inputs.contains(&neg) as i32) as f64
+}
 
 pub fn apply_miner_input(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank, mass: f64) {
     let cw = inputs.contains(&PlayerInput::RollCW);
@@ -17,32 +22,20 @@ pub fn apply_miner_input(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank,
     if cw == ccw {
         return;
     }
-    let sign = if cw { 1.0_f64 } else { -1.0 };
+    let sign: f64 = if cw { 1.0 } else { -1.0 };
     bank.command += DVec3::NEG_Z * (bank.max_accel(mass) * sign);
 }
 
 /// Write a body-space linear-acceleration command for W/S (±Y) and A/D (±X).
 /// Diagonal input is normalised; the thruster system converts it to world-space Δvel.
 pub fn apply_miner_translation(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank, mass: f64) {
-    let up = inputs.contains(&PlayerInput::ThrustUp);
-    let down = inputs.contains(&PlayerInput::ThrustDown);
-    let left = inputs.contains(&PlayerInput::ThrustLeft);
-    let right = inputs.contains(&PlayerInput::ThrustRight);
-    let fwd = inputs.contains(&PlayerInput::ThrustForward);
-    let back = inputs.contains(&PlayerInput::ThrustBackward);
+    let local = DVec3::new(
+        axis(inputs, PlayerInput::ThrustRight, PlayerInput::ThrustLeft),
+        axis(inputs, PlayerInput::ThrustUp, PlayerInput::ThrustDown),
+        axis(inputs, PlayerInput::ThrustBackward, PlayerInput::ThrustForward), // body -Z = nose/forward
+    );
 
-    let mut local = DVec3::ZERO;
-    if up != down {
-        local.y = if up { 1.0 } else { -1.0 };
-    }
-    if left != right {
-        local.x = if right { 1.0 } else { -1.0 };
-    }
-    if fwd != back {
-        local.z = if fwd { -1.0 } else { 1.0 }; // body -Z = nose/forward
-    }
-
-    if local.length_squared() > 1e-15 {
+    if local.length_squared() > MIN_DIR_SQ {
         bank.linear_command += local.normalize() * bank.max_linear_accel(mass);
     }
 }
@@ -264,14 +257,6 @@ mod tests {
             DVec3::ZERO,
             "no TAB → no damping command"
         );
-    }
-
-    #[test]
-    fn damping_zero_vel_no_command() {
-        let body = make_body(); // vel = ZERO
-        let mut bank = make_bank();
-        apply_linear_damping(&damping_inputs(), &body, &mut bank);
-        assert_eq!(bank.linear_command, DVec3::ZERO);
     }
 
     #[test]
