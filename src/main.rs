@@ -197,7 +197,10 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
     let gpu = GpuRenderer::new_blocking(
         handle,
         (INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT),
-        GpuRendererSettings::default(),
+        GpuRendererSettings {
+            uncapped_present: false,
+            ..GpuRendererSettings::default()
+        },
     )
     .expect("GPU init failed — no Vulkan/Metal/DX12 adapter?");
 

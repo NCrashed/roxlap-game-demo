@@ -18,7 +18,7 @@ pub fn render(
     #[resource] gpu_world: &GpuWorldData,
     #[resource] screen: &ScreenState,
     #[resource] egui_ctx: &egui::Context,
-    #[resource] perf: &PerformanceInfo,
+    #[resource] perf: &mut PerformanceInfo,
     world: &SubWorld,
 ) {
     let (w, h) = (screen.width, screen.height);
@@ -35,7 +35,10 @@ pub fn render(
             .0
     };
 
-    let world_cam = GpuCamera { fov_y_rad, ..core_cam };
+    let world_cam = GpuCamera {
+        fov_y_rad,
+        ..core_cam
+    };
 
     let cube_cam = {
         let mut q = <(&CubeMarker, &NewtonBody)>::query();
@@ -52,6 +55,9 @@ pub fn render(
             })
             .unwrap_or(world_cam)
     };
+
+    // Snapshot work time before vsync blocks inside render_scene.
+    perf.work_time_us_raw = perf.work_timer.elapsed().as_micros() as u64;
 
     gpu.render_scene(
         &gpu_world.scene,
@@ -70,10 +76,7 @@ pub fn render(
             let r = td.dot(Vec3::from(world_cam.right));
             let d = td.dot(Vec3::from(world_cam.down));
             let focal = half.x;
-            Some(egui::pos2(
-                half.x + focal * r / f,
-                half.y + focal * d / f,
-            ))
+            Some(egui::pos2(half.x + focal * r / f, half.y + focal * d / f))
         } else {
             None
         }
@@ -89,13 +92,10 @@ pub fn render(
             .fixed_pos(egui::pos2(8.0, 8.0))
             .interactable(false)
             .show(ctx, |ui| {
+                ui.colored_label(egui::Color32::YELLOW, format!("FPS {}", perf.fps));
                 ui.colored_label(
                     egui::Color32::YELLOW,
-                    format!("FPS {}", perf.fps),
-                );
-                ui.colored_label(
-                    egui::Color32::YELLOW,
-                    format!("FRAME  {:.2} ms", perf.frame_time_us as f64 / 1000.0),
+                    format!("WORK   {:.2} ms", perf.work_time_us as f64 / 1000.0),
                 );
             });
 
@@ -119,7 +119,13 @@ pub fn render(
     });
 
     let clipped_prims = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
-    gpu.paint_egui(&clipped_prims, &full_output.textures_delta, full_output.pixels_per_point);
+    gpu.paint_egui(
+        &clipped_prims,
+        &full_output.textures_delta,
+        full_output.pixels_per_point,
+    );
+
+    perf.work_timer = std::time::Instant::now();
 }
 
 fn cube_space_gpu_cam(
