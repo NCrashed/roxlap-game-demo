@@ -183,6 +183,7 @@ mod tests {
         for (a, b) in [
             (PlayerInput::ThrustUp, PlayerInput::ThrustDown),
             (PlayerInput::ThrustLeft, PlayerInput::ThrustRight),
+            (PlayerInput::ThrustForward, PlayerInput::ThrustBackward),
         ] {
             let inputs: HashSet<PlayerInput> = [a, b].into_iter().collect();
             let mut bank = make_bank();
@@ -215,6 +216,19 @@ mod tests {
         );
         assert!(bank.linear_command.y.abs() < 1e-12, "spurious Y component");
         assert!(bank.linear_command.z.abs() < 1e-12, "spurious Z component");
+    }
+
+    #[test]
+    fn forward_thrust_sets_negative_z_command() {
+        let inputs: HashSet<PlayerInput> = [PlayerInput::ThrustForward].into_iter().collect();
+        let mut bank = make_bank();
+        apply_miner_translation(&inputs, &mut bank);
+        assert!(
+            bank.linear_command.z < 0.0,
+            "LShift should set -Z body-space command (body -Z = nose)"
+        );
+        assert!(bank.linear_command.x.abs() < 1e-12, "spurious X component");
+        assert!(bank.linear_command.y.abs() < 1e-12, "spurious Y component");
     }
 
     // Integration: translation command → actual world-space vel via thruster system.
@@ -310,7 +324,7 @@ mod tests {
         body.angular_vel = DVec3::NEG_Z * 3.0; // rolling CW
         let mut bank = make_bank();
         apply_angular_damping(&damping_inputs(), &body, &mut bank);
-        // Command should oppose roll: dot with NEG_Z must be positive (counters -Z spin)
+        // Command should oppose roll: command is in +Z, so dot with NEG_Z is negative.
         assert!(
             bank.command.dot(DVec3::NEG_Z) < 0.0,
             "command must oppose -Z roll; command={:?}",

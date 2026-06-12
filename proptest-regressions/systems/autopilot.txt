@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 804fcbdba1a26bab383664ab8d588e0b2ef5dd40ec06797c51d3530a0f849d7a # shrinks to tgt_yaw = -2.018426162191565, tgt_pitch = 0.0
