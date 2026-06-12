@@ -6,19 +6,22 @@ mod systems;
 mod world;
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Instant;
 
 use glam::{DVec3, Vec2};
 use legion::{Resources, Schedule, World};
-use roxlap_core::{rasterizer::ScratchPool, update_lighting, Engine};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use roxlap_core::{update_lighting, Engine};
 use roxlap_formats::edit::MAXZDIM;
+use roxlap_gpu::{
+    decompress_chunk, GpuRenderer, GpuRendererSettings, GpuSceneResident, GridUpload, SceneUpload,
+};
 use sdl2::{
     event::{Event, WindowEvent},
     keyboard::Scancode,
     mixer::InitFlag,
-    pixels::PixelFormatEnum,
-    render::{Canvas, Texture, TextureCreator, WindowCanvas},
-    video::{Window, WindowContext},
+    video::Window,
     EventPump,
 };
 
@@ -56,35 +59,44 @@ pub type MouseDelta = Vec2;
 
 pub struct FrameTimer(pub Instant);
 
-pub struct CanvasResources {
-    pub canvas: Canvas<Window>,
-    pub texture_creator: TextureCreator<WindowContext>,
+// --- GPU resources ---
+
+/// GPU-resident voxel scene (base world + rotating cube as two grids).
+pub struct GpuWorldData {
+    pub scene: GpuSceneResident,
 }
 
-/// Long-lived streaming texture for the 3-D framebuffer.
-/// Lives outside CanvasResources so the canvas and the texture can be
-/// borrowed independently in the render system.
-pub struct RenderTexture(pub Texture);
+// --- Dead-code structs kept for HUD migration ---
 
-/// Reusable per-frame scratch: opticast pool, pixel buffer, depth buffer.
-/// Recreated whenever the window is resized.
+/// SDL2 canvas + texture creator, kept for future HUD layer migration.
+#[allow(dead_code)]
+pub struct CanvasResources {
+    pub canvas: sdl2::render::Canvas<Window>,
+    pub texture_creator: sdl2::render::TextureCreator<sdl2::video::WindowContext>,
+}
+
+/// Long-lived streaming texture for the 3-D framebuffer. Kept for HUD migration.
+#[allow(dead_code)]
+pub struct RenderTexture(pub sdl2::render::Texture);
+
+/// Reusable per-frame scratch buffers. Kept for HUD migration.
+#[allow(dead_code)]
 pub struct RenderBuffers {
-    pub pool: ScratchPool,
+    pub pool: roxlap_core::rasterizer::ScratchPool,
     pub framebuffer: Vec<u32>,
     pub zbuffer: Vec<f32>,
-    /// Secondary buffers for the cube rendering pass.
     pub cube_fb: Vec<u32>,
     pub cube_zb: Vec<f32>,
     pub width: u32,
     pub height: u32,
 }
 
+#[allow(dead_code)]
 impl RenderBuffers {
     pub fn new(width: u32, height: u32, vsid: u32) -> Self {
         let n = (width * height) as usize;
-        // Pool must be large enough for both the ground (vsid) and the cube VXL.
         let pool_vsid = vsid.max(CUBE_VXL_VSID);
-        let mut pool = ScratchPool::new(width, height, pool_vsid);
+        let mut pool = roxlap_core::rasterizer::ScratchPool::new(width, height, pool_vsid);
         pool.set_treat_z_max_as_air(true);
         Self {
             pool,
@@ -98,7 +110,37 @@ impl RenderBuffers {
     }
 }
 
-fn initialize() -> Result<(WindowCanvas, EventPump), String> {
+// --- SDL2 window handle wrapper for wgpu ---
+
+/// Wraps an SDL2 window so wgpu can create a surface from it.
+///
+/// # Safety
+/// `sdl2::video::Window` is `!Send + !Sync` because SDL2 is single-threaded.
+/// We declare it `Send + Sync` here because wgpu only reads the raw OS handle
+/// (a pointer/integer) during surface creation and resize, both of which
+/// happen on the main thread in this application.
+struct SdlWindowTarget(Window);
+
+unsafe impl Send for SdlWindowTarget {}
+unsafe impl Sync for SdlWindowTarget {}
+
+impl HasWindowHandle for SdlWindowTarget {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        self.0.window_handle()
+    }
+}
+
+impl HasDisplayHandle for SdlWindowTarget {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        self.0.display_handle()
+    }
+}
+
+fn initialize() -> Result<(Window, EventPump), String> {
     let sdl_context = sdl2::init()?;
     sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "best");
     let video_subsystem = sdl_context.video()?;
@@ -119,42 +161,46 @@ fn initialize() -> Result<(WindowCanvas, EventPump), String> {
         .build()
         .expect("could not initialize video subsystem");
 
-    let mut canvas = window
-        .into_canvas()
-        .accelerated()
-        .present_vsync()
-        .build()
-        .expect("could not make a canvas");
-
-    canvas.present();
-
     sdl_context.mouse().set_relative_mouse_mode(true);
 
     let event_pump = sdl_context.event_pump()?;
 
-    Ok((canvas, event_pump))
+    Ok((window, event_pump))
 }
 
-fn initial_resources(canvas: Canvas<Window>) -> Resources {
-    let mut resources = Resources::default();
-    let texture_creator = canvas.texture_creator();
-
-    // Create the streaming texture at the initial window size; the render system
-    // recreates it whenever WindowSize changes.
-    let render_texture = RenderTexture(
-        texture_creator
-            .create_texture_streaming(
-                PixelFormatEnum::ARGB8888,
-                INITIAL_WINDOW_WIDTH / 2,
-                INITIAL_WINDOW_HEIGHT / 2,
-            )
-            .expect("failed to create render texture"),
-    );
-
-    let canvas_resources = CanvasResources {
-        canvas,
-        texture_creator,
+fn build_gpu_scene(
+    gpu: &GpuRenderer,
+    vxl: &roxlap_formats::vxl::Vxl,
+    cube_vxl: &roxlap_formats::vxl::Vxl,
+) -> GpuSceneResident {
+    let base_chunk = decompress_chunk(vxl);
+    let base_grid = GridUpload {
+        vsid: VSID,
+        origin_chunk: [0, 0, 0],
+        chunks_dims: [1, 1, 1],
+        pool_dims: [1, 1, 1],
+        chunks: vec![([0, 0, 0], base_chunk)],
     };
+
+    let cube_chunk = decompress_chunk(cube_vxl);
+    let cube_grid = GridUpload {
+        vsid: CUBE_VXL_VSID,
+        origin_chunk: [0, 0, 0],
+        chunks_dims: [1, 1, 1],
+        pool_dims: [1, 1, 1],
+        chunks: vec![([0, 0, 0], cube_chunk)],
+    };
+
+    GpuSceneResident::upload(
+        gpu.device(),
+        &SceneUpload {
+            grids: vec![base_grid, cube_grid],
+        },
+    )
+}
+
+fn initial_resources(window: Window) -> Resources {
+    let mut resources = Resources::default();
 
     let mut engine = Engine::new();
     engine.set_side_shades(15, 0, 8, 8, 8, 8);
@@ -190,30 +236,36 @@ fn initial_resources(canvas: Canvas<Window>) -> Resources {
         engine.lights(),
     );
 
+    let arc_window = Arc::new(SdlWindowTarget(window));
+    let gpu = GpuRenderer::new_blocking(
+        arc_window,
+        (INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT),
+        GpuRendererSettings::default(),
+    )
+    .expect("GPU init failed — no Vulkan/Metal/DX12 adapter?");
+
+    let gpu_world = GpuWorldData {
+        scene: build_gpu_scene(&gpu, &vxl, &cube_vxl),
+    };
+
     resources.insert(engine);
-    resources.insert(canvas_resources);
-    resources.insert(render_texture);
     resources.insert(ScreenState {
         width: INITIAL_WINDOW_WIDTH,
         height: INITIAL_WINDOW_HEIGHT,
         target_dir: miner_initial_forward(),
     });
     resources.insert(Vec2::ZERO);
-    resources.insert(RenderBuffers::new(
-        INITIAL_WINDOW_WIDTH / 2,
-        INITIAL_WINDOW_HEIGHT / 2,
-        VSID,
-    ));
     resources.insert(HashSet::<PlayerInput>::new());
     resources.insert(Worlds {
         base: vxl,
         cube: cube_vxl,
     });
     resources.insert(FrameTimer(Instant::now()));
-    // Overwritten at the top of every game-loop iteration before any system runs.
     resources.insert(Dt(0.0));
     resources.insert(FontRenderer::new());
     resources.insert(PerformanceInfo::new());
+    resources.insert(gpu);
+    resources.insert(gpu_world);
 
     resources
 }
@@ -232,11 +284,11 @@ fn build_schedule() -> Schedule {
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let (canvas, mut event_pump) = initialize().unwrap();
+    let (window, mut event_pump) = initialize().unwrap();
 
     let mut schedule = build_schedule();
     let mut world = World::default();
-    let mut resources = initial_resources(canvas);
+    let mut resources = initial_resources(window);
 
     populate_world(&mut world);
 
@@ -289,9 +341,17 @@ fn main() {
                     win_event: WindowEvent::Resized(x, y),
                     ..
                 } => {
-                    let mut ss = resources.get_mut::<ScreenState>().unwrap();
-                    ss.width = x.max(1) as u32;
-                    ss.height = y.max(1) as u32;
+                    let new_w = x.max(1) as u32;
+                    let new_h = y.max(1) as u32;
+                    {
+                        let mut ss = resources.get_mut::<ScreenState>().unwrap();
+                        ss.width = new_w;
+                        ss.height = new_h;
+                    }
+                    resources
+                        .get_mut::<GpuRenderer>()
+                        .unwrap()
+                        .resize(new_w, new_h);
                 }
                 _ => {}
             }

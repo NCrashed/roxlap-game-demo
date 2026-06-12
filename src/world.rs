@@ -21,6 +21,7 @@ pub const CUBE_VXL_EDGE: i32 = 16;
 
 /// Holds both the static ground world and the pre-lit cube VXL.
 /// Bundled into one resource to stay within Legion's 8-resource-per-system limit.
+#[allow(dead_code)]
 pub struct Worlds {
     pub base: Vxl,
     pub cube: Vxl,
