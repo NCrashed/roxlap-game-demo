@@ -32,7 +32,11 @@ pub fn apply_miner_translation(inputs: &HashSet<PlayerInput>, bank: &mut Thruste
     let local = DVec3::new(
         axis(inputs, PlayerInput::ThrustRight, PlayerInput::ThrustLeft),
         axis(inputs, PlayerInput::ThrustUp, PlayerInput::ThrustDown),
-        axis(inputs, PlayerInput::ThrustBackward, PlayerInput::ThrustForward), // body -Z = nose/forward
+        axis(
+            inputs,
+            PlayerInput::ThrustBackward,
+            PlayerInput::ThrustForward,
+        ), // body -Z = nose/forward
     );
 
     if local.length_squared() > MIN_DIR_SQ {

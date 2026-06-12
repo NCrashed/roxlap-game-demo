@@ -775,18 +775,18 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "roxlap-cavegen"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1682eaf2ee57304961efc5a3443dd1b64dfcd82f3cb2c0783c23040f30cc442d"
+checksum = "280daa3b5c4f90e016a44b17ee9bf42d8f3fe1e670d7db05bb3dac2958b5a2cf"
 dependencies = [
  "roxlap-formats",
 ]
 
 [[package]]
 name = "roxlap-core"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "693598568a45154f7c48a003a1ecf56076401492710542d83fae3d3c2882b67f"
+checksum = "dc412a9f3589d9e721a2af723118c481fac19e38e9fa5dabd6da4d5711ee9fb9"
 dependencies = [
  "rayon",
  "roxlap-formats",
@@ -794,9 +794,9 @@ dependencies = [
 
 [[package]]
 name = "roxlap-formats"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ce4af9c28ae509c8e82a5b07ed5f233ec17a181807fb5776e3a124a5e53bed"
+checksum = "b102849d000eb1a80a823c64da748a90bc2fcce02c1b883f7721b5d12e98cdd2"
 
 [[package]]
 name = "roxlap-game-demo"

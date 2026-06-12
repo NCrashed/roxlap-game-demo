@@ -170,5 +170,4 @@ mod tests {
         );
         assert!(body.vel.x.abs() < 1e-12);
     }
-
 }
