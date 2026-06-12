@@ -6,34 +6,13 @@ use crate::{
     Dt,
 };
 
-const MIN_COMMAND: f64 = 1e-15;
-
 pub fn apply_thrusters(body: &mut NewtonBody, bank: &mut ThrusterBank, dt: f64) {
-    // --- Rotational ---
-    let mag = bank.command.length();
-    if mag >= MIN_COMMAND {
-        let dir = bank.command / mag;
-        let throttle = (mag / bank.max_accel(body.mass)).min(1.0);
-        let accel = bank.accel_per_thruster(body.mass);
-        for torque in bank.torques {
-            let activation = dir.dot(torque).max(0.0) * throttle;
-            body.angular_vel += body.orientation * (torque * (activation * accel * dt));
-        }
-    }
+    body.angular_vel +=
+        body.orientation * (bank.command.clamp_length_max(bank.max_rot_accel) * dt);
     bank.command = DVec3::ZERO;
 
-    // --- Linear ---
-    let lin_mag = bank.linear_command.length();
-    if lin_mag >= MIN_COMMAND {
-        let lin_dir = bank.linear_command / lin_mag;
-        let max_la = bank.max_linear_accel(body.mass);
-        let throttle = (lin_mag / max_la).min(1.0);
-        let la = bank.linear_force / body.mass;
-        for axis in bank.linear_axes {
-            let activation = lin_dir.dot(axis).max(0.0) * throttle;
-            body.vel += body.orientation * (axis * (activation * la * dt));
-        }
-    }
+    body.vel +=
+        body.orientation * (bank.linear_command.clamp_length_max(bank.max_lin_accel) * dt);
     bank.linear_command = DVec3::ZERO;
 }
 
@@ -63,11 +42,10 @@ mod tests {
         }
     }
 
-    // radius=1.0, rot_force=0.6 N → accel_per = 0.6×1/(0.4×1×1) = 1.5 rad/s²
-    // max_accel = 1.5 × 2 = 3.0 rad/s²  (same as old 0.3 N × 4 nozzles)
-    // lin_force=5.0 N → max_linear_accel = 5.0 m/s²
+    // mass=1.0, radius=1.0, rot_force=0.6 N → max_rot_accel = 5×0.6/(1×1) = 3.0 rad/s²
+    // lin_force=5.0 N → max_lin_accel = 5.0 m/s²
     fn make_bank() -> ThrusterBank {
-        ThrusterBank::new(1.0, 0.6, 5.0)
+        ThrusterBank::new(1.0, 1.0, 0.6, 5.0)
     }
 
     // ── Rotational ──────────────────────────────────────────────────────────
@@ -145,7 +123,7 @@ mod tests {
         ] {
             let mut body = make_body();
             let mut bank = make_bank();
-            bank.linear_command = dir * bank.max_linear_accel(body.mass);
+            bank.linear_command = dir * bank.max_lin_accel;
             apply_thrusters(&mut body, &mut bank, 1.0);
             let dot = body.vel.dot(dir);
             assert!(
@@ -162,7 +140,7 @@ mod tests {
         let mut body = make_body();
         body.orientation = DQuat::from_rotation_x(FRAC_PI_2);
         let mut bank = make_bank();
-        bank.linear_command = DVec3::Y * bank.max_linear_accel(body.mass);
+        bank.linear_command = DVec3::Y * bank.max_lin_accel;
         apply_thrusters(&mut body, &mut bank, 1.0);
         assert!(
             body.vel.z > 0.0,

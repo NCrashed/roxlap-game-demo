@@ -40,7 +40,7 @@ pub fn apply_autopilot(body: &NewtonBody, bank: &mut ThrusterBank, target_dir: D
         return;
     }
 
-    let max_a = bank.max_accel(body.mass);
+    let max_a = bank.max_rot_accel;
 
     let steer_axis = if steer_sin > EPSILON {
         steer_cross / steer_sin
@@ -136,7 +136,7 @@ mod tests {
         let dt = 1.0 / 60.0;
         let dt_obj = Dt(dt);
         for _ in 0..(seconds / dt) as usize {
-            let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
+            let mut bank = ThrusterBank::new(1.0, 1.0, 0.6, 5.0);
             apply_autopilot(&body, &mut bank, target);
             apply_thrusters(&mut body, &mut bank, dt);
             body.integrate_rotation(&dt_obj);
@@ -169,7 +169,7 @@ mod tests {
                 orientation: DQuat::IDENTITY,
                 angular_vel: DVec3::new(ang_x, ang_y, ang_z),
             };
-            let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
+            let mut bank = ThrusterBank::new(1.0, 1.0, 0.6, 5.0);
             apply_autopilot(&body, &mut bank, target);
             prop_assert!(bank.command.is_finite(), "command NaN/inf");
         }
@@ -193,8 +193,8 @@ mod tests {
         let dt = 1.0 / 60.0;
         let dt_obj = Dt(dt);
         for _ in 0..60 {
-            let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
-            bank.command += DVec3::NEG_Z * bank.max_accel(body.mass);
+            let mut bank = ThrusterBank::new(1.0, 1.0, 0.6, 5.0);
+            bank.command += DVec3::NEG_Z * bank.max_rot_accel;
             apply_autopilot(&body, &mut bank, target);
             apply_thrusters(&mut body, &mut bank, dt);
             body.integrate_rotation(&dt_obj);
@@ -221,8 +221,8 @@ mod tests {
         let dt = 1.0 / 60.0;
         let dt_obj = Dt(dt);
         for _ in 0..(8.0 / dt) as usize {
-            let mut bank = ThrusterBank::new(1.0, 0.6, 5.0);
-            bank.command += DVec3::NEG_Z * bank.max_accel(body.mass);
+            let mut bank = ThrusterBank::new(1.0, 1.0, 0.6, 5.0);
+            bank.command += DVec3::NEG_Z * bank.max_rot_accel;
             apply_autopilot(&body, &mut bank, target);
             apply_thrusters(&mut body, &mut bank, dt);
             body.integrate_rotation(&dt_obj);

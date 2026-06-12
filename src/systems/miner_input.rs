@@ -8,7 +8,7 @@ use crate::{
     input::PlayerInput,
 };
 
-/// Proportional retro-thrust gain (s⁻¹). Terminal velocity ≈ max_linear_accel / LINEAR_DAMPING.
+/// Proportional retro-thrust gain (s⁻¹). Terminal velocity ≈ max_lin_accel / LINEAR_DAMPING.
 const LINEAR_DAMPING: f64 = 1.5;
 const MIN_DIR_SQ: f64 = 1e-15;
 
@@ -16,19 +16,19 @@ fn axis(inputs: &HashSet<PlayerInput>, pos: PlayerInput, neg: PlayerInput) -> f6
     (inputs.contains(&pos) as i32 - inputs.contains(&neg) as i32) as f64
 }
 
-pub fn apply_miner_input(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank, mass: f64) {
+pub fn apply_miner_input(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank) {
     let cw = inputs.contains(&PlayerInput::RollCW);
     let ccw = inputs.contains(&PlayerInput::RollCCW);
     if cw == ccw {
         return;
     }
     let sign: f64 = if cw { 1.0 } else { -1.0 };
-    bank.command += DVec3::NEG_Z * (bank.max_accel(mass) * sign);
+    bank.command += DVec3::NEG_Z * (bank.max_rot_accel * sign);
 }
 
 /// Write a body-space linear-acceleration command for W/S (±Y) and A/D (±X).
 /// Diagonal input is normalised; the thruster system converts it to world-space Δvel.
-pub fn apply_miner_translation(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank, mass: f64) {
+pub fn apply_miner_translation(inputs: &HashSet<PlayerInput>, bank: &mut ThrusterBank) {
     let local = DVec3::new(
         axis(inputs, PlayerInput::ThrustRight, PlayerInput::ThrustLeft),
         axis(inputs, PlayerInput::ThrustUp, PlayerInput::ThrustDown),
@@ -40,12 +40,12 @@ pub fn apply_miner_translation(inputs: &HashSet<PlayerInput>, bank: &mut Thruste
     );
 
     if local.length_squared() > MIN_DIR_SQ {
-        bank.linear_command += local.normalize() * bank.max_linear_accel(mass);
+        bank.linear_command += local.normalize() * bank.max_lin_accel;
     }
 }
 
 /// Write a retro-thrust command opposing body velocity (only when TAB is held).
-/// Adds to linear_command alongside thrust; the bank caps at max_linear_accel.
+/// Adds to linear_command alongside thrust; the bank caps at max_lin_accel.
 /// At low speed this is proportional drag; at high speed it saturates (bang-bang).
 pub fn apply_linear_damping(
     inputs: &HashSet<PlayerInput>,
@@ -82,8 +82,8 @@ pub fn apply_angular_damping(
 pub fn miner_input(world: &mut SubWorld, #[resource] inputs: &HashSet<PlayerInput>) {
     let mut query = <(&Miner, &NewtonBody, &mut ThrusterBank)>::query();
     for (_, body, bank) in query.iter_mut(world) {
-        apply_miner_input(inputs, bank, body.mass);
-        apply_miner_translation(inputs, bank, body.mass);
+        apply_miner_input(inputs, bank);
+        apply_miner_translation(inputs, bank);
         apply_linear_damping(inputs, body, bank);
         apply_angular_damping(inputs, body, bank);
     }
@@ -108,7 +108,7 @@ mod tests {
     }
 
     fn make_bank() -> ThrusterBank {
-        ThrusterBank::new(1.0, 0.6, 5.0)
+        ThrusterBank::new(1.0, 1.0, 0.6, 5.0)
     }
 
     fn arb_player_input() -> impl Strategy<Value = PlayerInput> {
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn no_input_bank_unchanged() {
         let mut bank = make_bank();
-        apply_miner_input(&HashSet::new(), &mut bank, 1.0);
+        apply_miner_input(&HashSet::new(), &mut bank);
         assert_eq!(bank.command, DVec3::ZERO);
     }
 
@@ -144,7 +144,7 @@ mod tests {
         both.insert(PlayerInput::RollCW);
         both.insert(PlayerInput::RollCCW);
         let mut bank = make_bank();
-        apply_miner_input(&both, &mut bank, 1.0);
+        apply_miner_input(&both, &mut bank);
         assert_eq!(bank.command, DVec3::ZERO);
     }
 
@@ -152,7 +152,7 @@ mod tests {
         #[test]
         fn no_nan_or_inf(inputs in arb_inputs()) {
             let mut bank = make_bank();
-            apply_miner_input(&inputs, &mut bank, 1.0);
+            apply_miner_input(&inputs, &mut bank);
             prop_assert!(bank.command.is_finite());
         }
     }
@@ -161,7 +161,7 @@ mod tests {
     fn roll_command_along_neg_z() {
         let mut bank = make_bank();
         let inputs: HashSet<PlayerInput> = [PlayerInput::RollCW].into_iter().collect();
-        apply_miner_input(&inputs, &mut bank, 1.0);
+        apply_miner_input(&inputs, &mut bank);
         let perp = bank.command - DVec3::NEG_Z * bank.command.dot(DVec3::NEG_Z);
         assert!(
             perp.length() < 1e-12,
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn no_thrust_input_linear_command_zero() {
         let mut bank = make_bank();
-        apply_miner_translation(&HashSet::new(), &mut bank, 1.0);
+        apply_miner_translation(&HashSet::new(), &mut bank);
         assert_eq!(bank.linear_command, DVec3::ZERO);
     }
 
@@ -186,7 +186,7 @@ mod tests {
         ] {
             let inputs: HashSet<PlayerInput> = [a, b].into_iter().collect();
             let mut bank = make_bank();
-            apply_miner_translation(&inputs, &mut bank, 1.0);
+            apply_miner_translation(&inputs, &mut bank);
             assert_eq!(bank.linear_command, DVec3::ZERO);
         }
     }
@@ -195,7 +195,7 @@ mod tests {
     fn up_thrust_sets_positive_y_command() {
         let inputs: HashSet<PlayerInput> = [PlayerInput::ThrustUp].into_iter().collect();
         let mut bank = make_bank();
-        apply_miner_translation(&inputs, &mut bank, 1.0);
+        apply_miner_translation(&inputs, &mut bank);
         assert!(
             bank.linear_command.y > 0.0,
             "W should set +Y body-space command"
@@ -208,7 +208,7 @@ mod tests {
     fn right_thrust_sets_positive_x_command() {
         let inputs: HashSet<PlayerInput> = [PlayerInput::ThrustRight].into_iter().collect();
         let mut bank = make_bank();
-        apply_miner_translation(&inputs, &mut bank, 1.0);
+        apply_miner_translation(&inputs, &mut bank);
         assert!(
             bank.linear_command.x > 0.0,
             "D should set +X body-space command"
@@ -223,7 +223,7 @@ mod tests {
         let inputs: HashSet<PlayerInput> = [PlayerInput::ThrustUp].into_iter().collect();
         let mut body = make_body(); // identity orientation: body Y = world Y
         let mut bank = make_bank();
-        apply_miner_translation(&inputs, &mut bank, body.mass);
+        apply_miner_translation(&inputs, &mut bank);
         apply_thrusters(&mut body, &mut bank, 1.0);
         assert!(body.vel.dot(DVec3::Y) > 0.0, "up thrust not along body +Y");
         let perp = body.vel - DVec3::Y * body.vel.dot(DVec3::Y);
@@ -238,7 +238,7 @@ mod tests {
         let mut body = make_body();
         body.orientation = DQuat::from_rotation_x(FRAC_PI_2);
         let mut bank = make_bank();
-        apply_miner_translation(&inputs, &mut bank, body.mass);
+        apply_miner_translation(&inputs, &mut bank);
         apply_thrusters(&mut body, &mut bank, 1.0);
         assert!(body.vel.length() > 1e-9, "no velocity after thrust");
         assert!(body.vel.z > 0.0, "body +Y should map to world +Z");
