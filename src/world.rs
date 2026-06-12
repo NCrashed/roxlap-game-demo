@@ -2,7 +2,7 @@ use glam::{DMat3, DQuat, DVec3};
 use legion::World;
 use rand::RngExt;
 use roxlap_cavegen::pack_dense_grid_to_vxl;
-use roxlap_core::Camera;
+use roxlap_gpu::camera::Camera as GpuCamera;
 use roxlap_formats::{edit::MAXZDIM, vxl::Vxl};
 
 use crate::components::{
@@ -125,11 +125,12 @@ fn spawn_miner(world: &mut World) {
             orientation,
             angular_vel: DVec3::ZERO,
         },
-        CameraComponent(Camera {
-            pos: [0.0; 3],
+        CameraComponent(GpuCamera {
+            position: [0.0; 3],
             forward: [0.0, 0.0, -1.0],
             right: [1.0, 0.0, 0.0],
             down: [0.0, 1.0, 0.0],
+            fov_y_rad: 0.0,
         }),
         // rot: radius=1.0 m, 0.6 N × 2 nozzles → 3.0 rad/s² max
         // lin: 5.0 N → 5.0 m/s² max linear acceleration

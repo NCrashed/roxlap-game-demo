@@ -92,29 +92,7 @@ pub fn render(
             .0
     };
 
-    let world_cam = GpuCamera {
-        position: [
-            core_cam.pos[0] as f32,
-            core_cam.pos[1] as f32,
-            core_cam.pos[2] as f32,
-        ],
-        forward: [
-            core_cam.forward[0] as f32,
-            core_cam.forward[1] as f32,
-            core_cam.forward[2] as f32,
-        ],
-        right: [
-            core_cam.right[0] as f32,
-            core_cam.right[1] as f32,
-            core_cam.right[2] as f32,
-        ],
-        down: [
-            core_cam.down[0] as f32,
-            core_cam.down[1] as f32,
-            core_cam.down[2] as f32,
-        ],
-        fov_y_rad,
-    };
+    let world_cam = GpuCamera { fov_y_rad, ..core_cam };
 
     let cube_cam = {
         let mut q = <(&CubeMarker, &NewtonBody)>::query();
@@ -143,7 +121,7 @@ pub fn render(
 }
 
 fn cube_space_gpu_cam(
-    world_cam: &roxlap_core::Camera,
+    world_cam: &GpuCamera,
     orientation: DQuat,
     cube_center: DVec3,
     cube_vsid: u32,
@@ -151,11 +129,11 @@ fn cube_space_gpu_cam(
 ) -> GpuCamera {
     let vxl_center = DVec3::splat(f64::from(cube_vsid) / 2.0 - 0.5);
     let inv = orientation.inverse();
-    let world_pos = DVec3::from(world_cam.pos);
+    let world_pos = DVec3::from(world_cam.position.map(f64::from));
     let pos = inv * (world_pos - cube_center) + vxl_center;
-    let fwd = inv * DVec3::from(world_cam.forward);
-    let right = inv * DVec3::from(world_cam.right);
-    let down = inv * DVec3::from(world_cam.down);
+    let fwd = inv * DVec3::from(world_cam.forward.map(f64::from));
+    let right = inv * DVec3::from(world_cam.right.map(f64::from));
+    let down = inv * DVec3::from(world_cam.down.map(f64::from));
     GpuCamera {
         position: [pos.x as f32, pos.y as f32, pos.z as f32],
         forward: [fwd.x as f32, fwd.y as f32, fwd.z as f32],

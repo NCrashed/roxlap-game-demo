@@ -92,7 +92,7 @@ pub fn autopilot(
             let mut q = <(&Miner, &CameraComponent)>::query();
             q.iter(world).next().map(|(_, cam)| {
                 let c = &cam.0;
-                (DVec3::from(c.right), -DVec3::from(c.down))
+                (DVec3::from(c.right.map(f64::from)), -DVec3::from(c.down.map(f64::from)))
             })
         };
         if let Some((cam_right, cam_up)) = cam_axes {
