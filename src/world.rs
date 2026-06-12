@@ -19,14 +19,6 @@ pub const GROUND_Z: i32 = 200;
 pub const CUBE_VXL_VSID: u32 = 16;
 pub const CUBE_VXL_EDGE: i32 = 16;
 
-/// Holds both the static ground world and the pre-lit cube VXL.
-/// Bundled into one resource to stay within Legion's 8-resource-per-system limit.
-#[allow(dead_code)]
-pub struct Worlds {
-    pub base: Vxl,
-    pub cube: Vxl,
-}
-
 fn random_voxel_colour(rng: &mut impl rand::Rng) -> u32 {
     0x80_00_00_00 | (rng.random::<u32>() & 0x00_FF_FF_FF)
 }

@@ -38,7 +38,7 @@ use crate::systems::{
     thruster::thruster_system,
 };
 use crate::world::{
-    build_cube_vxl, build_world, miner_initial_forward, populate_world, Worlds, CUBE_VXL_VSID, VSID,
+    build_cube_vxl, build_world, miner_initial_forward, populate_world, CUBE_VXL_VSID, VSID,
 };
 
 const INITIAL_WINDOW_WIDTH: u32 = 1280;
@@ -217,10 +217,6 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
     resources.insert(AutopilotTarget(miner_initial_forward()));
     resources.insert(Vec2::ZERO);
     resources.insert(HashSet::<PlayerInput>::new());
-    resources.insert(Worlds {
-        base: vxl,
-        cube: cube_vxl,
-    });
     resources.insert(FrameTimer(Instant::now()));
     resources.insert(Dt(0.0));
     resources.insert(egui::Context::default());
