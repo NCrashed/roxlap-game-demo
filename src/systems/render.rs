@@ -1,4 +1,4 @@
-use glam::{DQuat, DVec3};
+use glam::{DQuat, DVec3, Vec3};
 use legion::{system, world::SubWorld, IntoQuery};
 use roxlap_gpu::{camera::Camera as GpuCamera, GpuRenderer};
 
@@ -59,6 +59,24 @@ pub fn render(
         128,
     );
 
+    // Project target_dir into screen space.
+    // fov_y = 2*atan(h/w) → tan(fov_y/2) = h/w → focal_pixels = w/2.
+    let target_screen = {
+        let td = screen.target_dir.as_vec3();
+        let f = td.dot(Vec3::from(world_cam.forward));
+        if f > 0.01 {
+            let r = td.dot(Vec3::from(world_cam.right));
+            let d = td.dot(Vec3::from(world_cam.down));
+            let focal = w as f32 / 2.0;
+            Some(egui::pos2(
+                w as f32 / 2.0 + focal * r / f,
+                h as f32 / 2.0 + focal * d / f,
+            ))
+        } else {
+            None
+        }
+    };
+
     let raw_input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
@@ -92,6 +110,13 @@ pub fn render(
             20.0,
             egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(255, 0, 255)),
         );
+        if let Some(tp) = target_screen {
+            painter.circle_stroke(
+                tp,
+                5.0,
+                egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(255, 0, 255)),
+            );
+        }
     });
 
     let clipped_prims = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
