@@ -131,16 +131,16 @@ fn cube_space_gpu_cam(
 ) -> GpuCamera {
     let vxl_center = DVec3::splat(f64::from(cube_vsid) / 2.0 - 0.5);
     let inv = orientation.inverse();
-    let world_pos = DVec3::from(world_cam.position.map(f64::from));
+    let world_pos = Vec3::from(world_cam.position).as_dvec3();
     let pos = inv * (world_pos - cube_center) + vxl_center;
-    let fwd = inv * DVec3::from(world_cam.forward.map(f64::from));
-    let right = inv * DVec3::from(world_cam.right.map(f64::from));
-    let down = inv * DVec3::from(world_cam.down.map(f64::from));
+    let fwd = inv * Vec3::from(world_cam.forward).as_dvec3();
+    let right = inv * Vec3::from(world_cam.right).as_dvec3();
+    let down = inv * Vec3::from(world_cam.down).as_dvec3();
     GpuCamera {
-        position: [pos.x as f32, pos.y as f32, pos.z as f32],
-        forward: [fwd.x as f32, fwd.y as f32, fwd.z as f32],
-        right: [right.x as f32, right.y as f32, right.z as f32],
-        down: [down.x as f32, down.y as f32, down.z as f32],
+        position: pos.as_vec3().into(),
+        forward: fwd.as_vec3().into(),
+        right: right.as_vec3().into(),
+        down: down.as_vec3().into(),
         fov_y_rad,
     }
 }
