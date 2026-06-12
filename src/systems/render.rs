@@ -22,7 +22,9 @@ pub fn render(
     world: &SubWorld,
 ) {
     let (w, h) = (screen.width, screen.height);
-    let fov_y_rad = 2.0 * f32::atan(h as f32 / w as f32);
+    let screen_size = egui::vec2(w as f32, h as f32);
+    let half = screen_size / 2.0;
+    let fov_y_rad = 2.0 * f32::atan(screen_size.y / screen_size.x);
 
     let core_cam = {
         let mut query = <&CameraComponent>::query();
@@ -67,10 +69,10 @@ pub fn render(
         if f > 0.01 {
             let r = td.dot(Vec3::from(world_cam.right));
             let d = td.dot(Vec3::from(world_cam.down));
-            let focal = w as f32 / 2.0;
+            let focal = half.x;
             Some(egui::pos2(
-                w as f32 / 2.0 + focal * r / f,
-                h as f32 / 2.0 + focal * d / f,
+                half.x + focal * r / f,
+                half.y + focal * d / f,
             ))
         } else {
             None
@@ -78,10 +80,7 @@ pub fn render(
     };
 
     let raw_input = egui::RawInput {
-        screen_rect: Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(w as f32, h as f32),
-        )),
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen_size)),
         ..Default::default()
     };
 
@@ -100,7 +99,7 @@ pub fn render(
                 );
             });
 
-        let center = egui::pos2(w as f32 / 2.0, h as f32 / 2.0);
+        let center = egui::pos2(half.x, half.y);
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("crosshair"),
