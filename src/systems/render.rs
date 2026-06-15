@@ -6,10 +6,7 @@ use roxlap_gpu::{
 };
 
 use crate::{
-    components::{
-        asteroid::AsteroidMarker, camera::CameraComponent, cube_marker::CubeMarker,
-        newton_body::NewtonBody,
-    },
+    components::{asteroid::AsteroidMarker, camera::CameraComponent, newton_body::NewtonBody},
     systems::performance_info::PerformanceInfo,
     AutopilotTarget, GpuWorldData, ScreenState, SpriteData,
 };
@@ -17,7 +14,6 @@ use crate::{
 #[allow(clippy::too_many_arguments)]
 #[system]
 #[read_component(CameraComponent)]
-#[read_component(CubeMarker)]
 #[read_component(AsteroidMarker)]
 #[read_component(NewtonBody)]
 pub fn render(
@@ -48,7 +44,7 @@ pub fn render(
         ..core_cam
     };
 
-    // Rebuild all sprite transforms: slot 0 = cube, slots 1+ = chunk asteroids.
+    // Rebuild all asteroid sprite transforms each frame.
     {
         let count = sprite_data.instance_count as usize;
         if count > 0 {
@@ -59,11 +55,6 @@ pub fn render(
                 };
                 count
             ];
-
-            let mut q = <(&CubeMarker, &NewtonBody)>::query();
-            if let Some((_, b)) = q.iter(world).next() {
-                transforms[0] = sprite_from_body(b, 0);
-            }
 
             let mut q = <(&AsteroidMarker, &NewtonBody)>::query();
             for (marker, b) in q.iter(world) {

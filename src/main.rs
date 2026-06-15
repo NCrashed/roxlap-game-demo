@@ -19,7 +19,7 @@ use roxlap_core::{update_lighting, Engine};
 use roxlap_formats::edit::MAXZDIM;
 use roxlap_gpu::{
     decompress_chunk, GpuRenderer, GpuRendererSettings, GpuSceneResident, GridUpload, SceneUpload,
-    SpriteInstance, SpriteInstanceTransform, SpriteModelRegistry,
+    SpriteModelRegistry,
 };
 use sdl2::{
     event::{Event, WindowEvent},
@@ -40,9 +40,7 @@ use crate::systems::{
     render::render_system,
     thruster::thruster_system,
 };
-use crate::world::{
-    build_asteroid_sprite_model, build_world, miner_initial_forward, populate_world, VSID,
-};
+use crate::world::{build_world, miner_initial_forward, populate_world, VSID};
 
 const INITIAL_WINDOW_WIDTH: u32 = 1280;
 const INITIAL_WINDOW_HEIGHT: u32 = 720;
@@ -180,7 +178,7 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
         engine.lights(),
     );
 
-    let mut gpu = GpuRenderer::new_blocking(
+    let gpu = GpuRenderer::new_blocking(
         handle,
         (INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT),
         GpuRendererSettings {
@@ -194,16 +192,7 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
         scene: build_gpu_scene(&gpu, &vxl),
     };
 
-    let mut sprite_registry = SpriteModelRegistry::new();
-    sprite_registry.add(build_asteroid_sprite_model());
-    let placeholder: SpriteInstanceTransform = bytemuck::Zeroable::zeroed();
-    gpu.set_sprite_instances(
-        &sprite_registry,
-        &[SpriteInstance {
-            model_id: 0,
-            transform: placeholder,
-        }],
-    );
+    let sprite_registry = SpriteModelRegistry::new();
 
     resources.insert(engine);
     resources.insert(ScreenState {
@@ -222,7 +211,7 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
     resources.insert(gpu_world);
     resources.insert(SpriteData {
         registry: sprite_registry,
-        instance_count: 1, // slot 0 = the cube (CubeMarker)
+        instance_count: 0,
     });
     resources.insert(GeneratedChunks(HashSet::new()));
 

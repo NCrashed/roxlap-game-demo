@@ -6,8 +6,7 @@ use roxlap_formats::{edit::MAXZDIM, vxl::Vxl};
 use roxlap_gpu::{camera::Camera as GpuCamera, SpriteModel};
 
 use crate::components::{
-    camera::CameraComponent, cube_marker::CubeMarker, miner::Miner, newton_body::NewtonBody,
-    thruster::ThrusterBank,
+    camera::CameraComponent, miner::Miner, newton_body::NewtonBody, thruster::ThrusterBank,
 };
 
 pub const VSID: u32 = 64;
@@ -17,7 +16,6 @@ pub const VSID: u32 = 64;
 pub const GROUND_Z: i32 = 200;
 
 pub const CUBE_VXL_VSID: u32 = 16;
-pub const CUBE_VXL_EDGE: i32 = 16;
 
 fn random_voxel_colour(rng: &mut impl rand::Rng) -> u32 {
     0x80_00_00_00 | (rng.random::<u32>() & 0x00_FF_FF_FF)
@@ -93,7 +91,6 @@ pub fn build_asteroid_sprite_model() -> SpriteModel {
 
 pub fn populate_world(world: &mut World) {
     spawn_miner(world);
-    spawn_cube(world);
 }
 
 const MINER_PITCH: f64 = 0.8;
@@ -101,9 +98,6 @@ const MINER_PITCH: f64 = 0.8;
 const MINER_SPAWN_OFFSET_X: f64 = 70.0;
 /// Height above the ground plane at which the miner spawns (world units).
 const MINER_SPAWN_HEIGHT: f64 = 100.0;
-/// Vertical clearance between the ground and the bottom of the cube on spawn (world units).
-const CUBE_SPAWN_CLEARANCE: f64 = 15.0;
-
 fn miner_orientation() -> DQuat {
     let (sp, cp) = (MINER_PITCH.sin(), MINER_PITCH.cos());
     DQuat::from_mat3(&DMat3::from_cols(
@@ -145,23 +139,5 @@ fn spawn_miner(world: &mut World) {
         }),
         // mass=1.0 kg, radius=1.0 m, rot=0.6 N → 3.0 rad/s² max; lin=5.0 N → 5.0 m/s² max
         ThrusterBank::new(1.0, 1.0, 0.6, 5.0),
-    ));
-}
-
-fn spawn_cube(world: &mut World) {
-    let pos = DVec3::new(
-        f64::from(VSID) / 2.0,
-        f64::from(VSID) / 2.0,
-        f64::from(GROUND_Z) - f64::from(CUBE_VXL_EDGE) / 2.0 - CUBE_SPAWN_CLEARANCE,
-    );
-    world.push((
-        CubeMarker,
-        NewtonBody {
-            mass: 1.0,
-            pos,
-            vel: DVec3::ZERO,
-            orientation: DQuat::IDENTITY,
-            angular_vel: DVec3::new(0.3, 0.2, 0.1),
-        },
     ));
 }
