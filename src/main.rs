@@ -1,4 +1,5 @@
 mod components;
+mod generation;
 mod input;
 mod math;
 mod systems;
@@ -8,7 +9,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use glam::{DVec3, Vec2};
+use glam::{DVec3, IVec3, Vec2};
 use legion::{Resources, Schedule, World};
 use raw_window_handle::{
     DisplayHandle, HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
@@ -73,6 +74,9 @@ pub struct GpuWorldData {
 pub struct SpriteData {
     pub registry: SpriteModelRegistry,
 }
+
+/// Set of chunk coordinates (in chunk-space) that have already been generated.
+pub struct GeneratedChunks(pub HashSet<IVec3>);
 
 // --- SDL2 window handle wrapper for wgpu ---
 
@@ -142,7 +146,12 @@ fn build_gpu_scene(gpu: &GpuRenderer, vxl: &roxlap_formats::vxl::Vxl) -> GpuScen
         pool_dims: [1, 1, 1],
         chunks: vec![([0, 0, 0], base_chunk)],
     };
-    GpuSceneResident::upload(gpu.device(), &SceneUpload { grids: vec![base_grid] })
+    GpuSceneResident::upload(
+        gpu.device(),
+        &SceneUpload {
+            grids: vec![base_grid],
+        },
+    )
 }
 
 fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
@@ -186,7 +195,10 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
     let placeholder: SpriteInstanceTransform = bytemuck::Zeroable::zeroed();
     gpu.set_sprite_instances(
         &sprite_registry,
-        &[SpriteInstance { model_id: 0, transform: placeholder }],
+        &[SpriteInstance {
+            model_id: 0,
+            transform: placeholder,
+        }],
     );
 
     resources.insert(engine);
@@ -204,7 +216,10 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
     resources.insert(PerformanceInfo::new());
     resources.insert(gpu);
     resources.insert(gpu_world);
-    resources.insert(SpriteData { registry: sprite_registry });
+    resources.insert(SpriteData {
+        registry: sprite_registry,
+    });
+    resources.insert(GeneratedChunks(HashSet::new()));
 
     resources
 }
