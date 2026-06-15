@@ -1,18 +1,24 @@
 use bytemuck::Zeroable;
 use glam::{DVec3, Vec3};
 use legion::{system, world::SubWorld, IntoQuery};
-use roxlap_gpu::{camera::Camera as GpuCamera, GpuRenderer, SpriteInstance, SpriteInstanceTransform};
+use roxlap_gpu::{
+    camera::Camera as GpuCamera, GpuRenderer, SpriteInstance, SpriteInstanceTransform,
+};
 
 use crate::{
-    components::{camera::CameraComponent, cube_marker::CubeMarker, newton_body::NewtonBody},
+    components::{
+        asteroid::AsteroidMarker, camera::CameraComponent, cube_marker::CubeMarker,
+        newton_body::NewtonBody,
+    },
     systems::performance_info::PerformanceInfo,
-    AutopilotTarget, GpuWorldData, ScreenState,
+    AutopilotTarget, GpuWorldData, ScreenState, SpriteData,
 };
 
 #[allow(clippy::too_many_arguments)]
 #[system]
 #[read_component(CameraComponent)]
 #[read_component(CubeMarker)]
+#[read_component(AsteroidMarker)]
 #[read_component(NewtonBody)]
 pub fn render(
     #[resource] gpu: &mut GpuRenderer,
@@ -21,6 +27,7 @@ pub fn render(
     #[resource] autopilot_target: &AutopilotTarget,
     #[resource] egui_ctx: &egui::Context,
     #[resource] perf: &mut PerformanceInfo,
+    #[resource] sprite_data: &SpriteData,
     world: &SubWorld,
 ) {
     let screen_size = egui::vec2(screen.width as f32, screen.height as f32);
@@ -41,34 +48,39 @@ pub fn render(
         ..core_cam
     };
 
-    // Update asteroid sprite transform from its physics body each frame.
+    // Rebuild all sprite transforms: slot 0 = cube, slots 1+ = chunk asteroids.
     {
-        let mut q = <(&CubeMarker, &NewtonBody)>::query();
-        if let Some((_, b)) = q.iter(world).next() {
-            let s = (b.orientation * DVec3::X).as_vec3();
-            let h = (b.orientation * DVec3::Y).as_vec3();
-            let f = (b.orientation * DVec3::Z).as_vec3();
-            let mut transform = SpriteInstanceTransform::zeroed();
-            transform.inv_rot = [
-                [s.x, h.x, f.x, 0.0],
-                [s.y, h.y, f.y, 0.0],
-                [s.z, h.z, f.z, 0.0],
+        let count = sprite_data.instance_count as usize;
+        if count > 0 {
+            let mut transforms: Vec<SpriteInstance> = vec![
+                SpriteInstance {
+                    model_id: 0,
+                    transform: SpriteInstanceTransform::zeroed(),
+                };
+                count
             ];
-            transform.pos = b.pos.as_vec3().to_array();
-            gpu.update_sprite_instance_transforms(&[SpriteInstance { model_id: 0, transform }]);
+
+            let mut q = <(&CubeMarker, &NewtonBody)>::query();
+            if let Some((_, b)) = q.iter(world).next() {
+                transforms[0] = sprite_from_body(b, 0);
+            }
+
+            let mut q = <(&AsteroidMarker, &NewtonBody)>::query();
+            for (marker, b) in q.iter(world) {
+                let slot = marker.model_id as usize;
+                if slot < count {
+                    transforms[slot] = sprite_from_body(b, marker.model_id);
+                }
+            }
+
+            gpu.update_sprite_instance_transforms(&transforms);
         }
     }
 
     // Snapshot work time before vsync blocks inside render_scene.
     perf.work_time_us_raw = perf.work_timer.elapsed().as_micros() as u64;
 
-    gpu.render_scene(
-        &gpu_world.scene,
-        &[world_cam],
-        &world_cam,
-        fov_y_rad,
-        128,
-    );
+    gpu.render_scene(&gpu_world.scene, &[world_cam], &world_cam, fov_y_rad, 128);
 
     // Project target_dir into screen space.
     // fov_y = 2*atan(h/w) → tan(fov_y/2) = h/w → focal_pixels = w/2.
@@ -143,3 +155,19 @@ fn draw_hud(
     );
 }
 
+fn sprite_from_body(b: &NewtonBody, model_id: u32) -> SpriteInstance {
+    let s = (b.orientation * DVec3::X).as_vec3();
+    let h = (b.orientation * DVec3::Y).as_vec3();
+    let f = (b.orientation * DVec3::Z).as_vec3();
+    let mut transform = SpriteInstanceTransform::zeroed();
+    transform.inv_rot = [
+        [s.x, h.x, f.x, 0.0],
+        [s.y, h.y, f.y, 0.0],
+        [s.z, h.z, f.z, 0.0],
+    ];
+    transform.pos = b.pos.as_vec3().to_array();
+    SpriteInstance {
+        model_id,
+        transform,
+    }
+}

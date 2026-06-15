@@ -33,6 +33,7 @@ use crate::input::PlayerInput;
 use crate::systems::{
     autopilot::autopilot_system,
     camera::camera_update_system,
+    chunk_population::chunk_population_system,
     miner_input::miner_input_system,
     newton_body::newton_body_system,
     performance_info::{update_info_system, PerformanceInfo},
@@ -73,6 +74,8 @@ pub struct GpuWorldData {
 /// can call `gpu.update_sprite_model(&sprite_data.registry, chain_id)`.
 pub struct SpriteData {
     pub registry: SpriteModelRegistry,
+    /// Number of sprite instance slots currently allocated in the GPU buffer.
+    pub instance_count: u32,
 }
 
 /// Set of chunk coordinates (in chunk-space) that have already been generated.
@@ -127,6 +130,7 @@ fn initialize() -> Result<(Window, EventPump), String> {
         )
         .resizable()
         .position_centered()
+        .fullscreen()
         .build()
         .expect("could not initialize video subsystem");
 
@@ -180,7 +184,7 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
         handle,
         (INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT),
         GpuRendererSettings {
-            uncapped_present: false,
+            uncapped_present: true,
             ..GpuRendererSettings::default()
         },
     )
@@ -218,6 +222,7 @@ fn initial_resources(handle: Arc<SdlWindowHandle>) -> Resources {
     resources.insert(gpu_world);
     resources.insert(SpriteData {
         registry: sprite_registry,
+        instance_count: 1, // slot 0 = the cube (CubeMarker)
     });
     resources.insert(GeneratedChunks(HashSet::new()));
 
@@ -232,6 +237,7 @@ fn build_schedule() -> Schedule {
         .add_system(autopilot_system())
         .add_system(thruster_system())
         .add_system(newton_body_system())
+        .add_system(chunk_population_system())
         .add_thread_local(render_system())
         .build()
 }
